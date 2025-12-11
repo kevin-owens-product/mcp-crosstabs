@@ -173,47 +173,66 @@ export class SparkAPIClient {
     const insights: Array<{ id: string; content: string }> = [];
     const sources: SparkSource = {};
 
+    console.log('Parsing MCP response, length:', text.length);
+
     // Extract Chat ID (format: "Chat ID: <uuid>")
     const chatIdMatch = text.match(/Chat ID:\s*([a-f0-9-]{36})/i);
     if (chatIdMatch) {
       chatId = chatIdMatch[1];
+      console.log('Found Chat ID:', chatId);
     }
 
-    // Extract insights with ID and Content (format: "Insight ID: <uuid> Content: <text>")
-    const insightPattern = /Insight ID:\s*([a-f0-9-]{36})\s*Content:\s*([^\n]+)/gi;
+    // Extract insights - pattern matches "Insight ID: <uuid> Content: <text>"
+    // Using [^\S\n]* to match any whitespace except newlines between ID and Content
+    const insightPattern = /Insight ID:\s*([a-f0-9-]{36})[^\S\n]*Content:\s*([^\n]+)/gi;
+
     let match;
     while ((match = insightPattern.exec(text)) !== null) {
-      insights.push({
-        id: match[1],
-        content: match[2].trim()
-      });
+      const content = match[2].trim();
+      if (content.length > 0) {
+        insights.push({
+          id: match[1],
+          content: content
+        });
+      }
+    }
+
+    console.log('Parsed insights count:', insights.length);
+    if (insights.length > 0) {
+      console.log('First insight:', insights[0]);
     }
 
     // Extract source information
     const topicsMatch = text.match(/Topics:\s*([^\n]+)/i);
     if (topicsMatch) {
-      sources.topics = topicsMatch[1].split(',').map(t => t.trim()).filter(t => t.length > 0);
+      // Stop at "Datasets" if present
+      let topicsText = topicsMatch[1];
+      const datasetsIndex = topicsText.indexOf('Datasets');
+      if (datasetsIndex > 0) {
+        topicsText = topicsText.substring(0, datasetsIndex);
+      }
+      sources.topics = topicsText.split(',').map(t => t.trim()).filter(t => t.length > 0 && t !== 'Datasets');
     }
 
-    const datasetsMatch = text.match(/Datasets:\s*([^\n]+)/i);
+    const datasetsMatch = text.match(/Datasets:\s*([^\n]+?)(?=\s*Locations:|$)/i);
     if (datasetsMatch) {
       // Parse "GWI Core (ds-core)" format
       const datasetParts = datasetsMatch[1].split(',').map(d => {
-        const match = d.trim().match(/(.+?)\s*\(([^)]+)\)/);
-        if (match) {
-          return { name: match[1].trim(), code: match[2].trim() };
+        const m = d.trim().match(/(.+?)\s*\(([^)]+)\)/);
+        if (m) {
+          return { name: m[1].trim(), code: m[2].trim() };
         }
         return { name: d.trim(), code: d.trim() };
-      });
+      }).filter(d => d.name.length > 0 && !d.name.startsWith('Locations'));
       sources.datasets = datasetParts;
     }
 
-    const locationsMatch = text.match(/Locations:\s*([^\n]+)/i);
+    const locationsMatch = text.match(/Locations:\s*([^\n]+?)(?=\s*Time periods:|$)/i);
     if (locationsMatch) {
       sources.locations = locationsMatch[1].split(',').map(l => ({
         code: l.trim(),
         name: l.trim()
-      }));
+      })).filter(l => l.name.length > 0 && !l.name.startsWith('Time'));
     }
 
     const wavesMatch = text.match(/Time periods:\s*([^\n]+)/i);
@@ -221,8 +240,10 @@ export class SparkAPIClient {
       sources.waves = wavesMatch[1].split(',').map(w => ({
         code: w.trim(),
         name: w.trim()
-      }));
+      })).filter(w => w.name.length > 0);
     }
+
+    console.log('Parsed sources:', JSON.stringify(sources, null, 2).substring(0, 500));
 
     return {
       response: text,
