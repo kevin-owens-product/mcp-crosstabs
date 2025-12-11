@@ -85,14 +85,15 @@ export class SparkAPIClient {
   private currentChatId: string | null = null;
   private requestCounter: number = 0;
 
-  constructor(apiKey: string, useAlphaEnv: boolean = false) {
-    // Store API key without Bearer prefix - MCP endpoint expects raw key
-    this.apiKey = apiKey.replace(/^Bearer\s+/i, '');
-    // Default to production URL as per MCP documentation
+  constructor(apiKey: string, useAlphaEnv: boolean = true) {
+    // Store API key - will be formatted in sendMCPRequest
+    this.apiKey = apiKey.replace(/^Bearer\s+/i, '').trim();
+    // Use alpha environment by default (matches GWI_API_KEY behavior)
     this.baseUrl = useAlphaEnv
       ? 'https://api-alpha.globalwebindex.com'
       : 'https://api.globalwebindex.com';
     console.log(`SparkAPIClient initialized with baseUrl: ${this.baseUrl}`);
+    console.log(`API key length: ${this.apiKey.length}, starts with: ${this.apiKey.substring(0, 8)}...`);
   }
 
   /**
@@ -114,11 +115,14 @@ export class SparkAPIClient {
     console.log(`MCP API tool: ${request.params.name}`);
     console.log(`MCP API request body:`, JSON.stringify(request, null, 2));
 
+    // Try with Bearer prefix - common OAuth format
+    const authHeader = this.apiKey.startsWith('Bearer ') ? this.apiKey : `Bearer ${this.apiKey}`;
+    console.log(`Authorization header format: Bearer ***`);
+
     const response = await fetch(url, {
       method: 'POST',
       headers: {
-        // Per MCP docs: Authorization header with API key (no Bearer prefix)
-        'Authorization': this.apiKey,
+        'Authorization': authHeader,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(request),
