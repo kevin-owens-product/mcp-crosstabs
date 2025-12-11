@@ -519,8 +519,9 @@ async function handleAnalyzeIntent(crosstabId: string): Promise<string> {
 
   let crosstab;
   try {
-    // Fetch crosstab definition (without data - it returns definition only anyway)
-    crosstab = await orchestrator.client.getCrosstab(crosstabId, false);
+    // Fetch crosstab WITH data for comprehensive local analysis
+    crosstab = await orchestrator.client.getCrosstab(crosstabId, true);
+    console.log(`Fetched crosstab with ${crosstab.data?.length || 0} data points`);
   } catch (error) {
     console.error(`Failed to fetch crosstab ${crosstabId}:`, error);
     return `Failed to fetch crosstab with ID: ${crosstabId}\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}\n\nPlease check:\n- The crosstab ID is correct\n- Your API key has access to this crosstab`;
@@ -539,48 +540,79 @@ async function handleAnalyzeIntent(crosstabId: string): Promise<string> {
   return formatCrosstabSummary(crosstab);
 }
 
-// Analyze crosstab using Spark/MCP API
+// Analyze crosstab using full data from Platform API
 async function analyzeWithSpark(crosstab: any): Promise<string> {
   const context = buildCrosstabContext(crosstab);
 
-  // Build a detailed prompt for comprehensive analysis
-  const marketStr = context.markets.length > 0 ? context.markets.slice(0, 3).join(', ') : 'global';
-  const audienceStr = context.audiences.length > 0 ? context.audiences.join(', ') : 'internet users';
-  const topicsStr = context.rows.length > 0 ? context.rows.slice(0, 5).join(', ') : 'general consumer behavior';
+  // Build formatted result header
+  let result = `## ${crosstab.name}\n\n`;
 
-  const prompt = `Provide detailed consumer insights for ${audienceStr} in ${marketStr} about ${topicsStr}. Include specific percentages, comparisons to average, and actionable findings.`;
-
-  console.log('Spark analysis prompt:', prompt);
-
-  try {
-    const response = await sparkClient!.query(prompt);
-
-    // Build formatted result
-    let result = `## ${crosstab.name}\n\n`;
-
-    // Add context header
-    const contextParts: string[] = [];
-    if (context.markets.length > 0) {
-      const mkts = context.markets.slice(0, 5).join(', ');
-      contextParts.push(`**Markets:** ${mkts}${context.markets.length > 5 ? ` +${context.markets.length - 5} more` : ''}`);
-    }
-    if (context.waves.length > 0) {
-      contextParts.push(`**Period:** ${context.waves.join(', ')}`);
-    }
-    if (context.audiences.length > 0) {
-      contextParts.push(`**Audience:** ${context.audiences.join(', ')}`);
-    }
-
-    if (contextParts.length > 0) {
-      result += contextParts.join(' | ') + '\n\n---\n\n';
-    }
-
-    result += response.formattedText;
-    return result;
-  } catch (error) {
-    console.error('Spark analysis error:', error);
-    return `Failed to analyze crosstab: ${error instanceof Error ? error.message : 'Unknown error'}`;
+  // Add context header
+  const contextParts: string[] = [];
+  if (context.markets.length > 0) {
+    const mkts = context.markets.slice(0, 5).join(', ');
+    contextParts.push(`**Markets:** ${mkts}${context.markets.length > 5 ? ` +${context.markets.length - 5} more` : ''}`);
   }
+  if (context.waves.length > 0) {
+    contextParts.push(`**Period:** ${context.waves.join(', ')}`);
+  }
+  if (context.audiences.length > 0) {
+    contextParts.push(`**Audience:** ${context.audiences.join(', ')}`);
+  }
+
+  if (contextParts.length > 0) {
+    result += contextParts.join(' | ') + '\n\n---\n\n';
+  }
+
+  // Check if we have actual crosstab data to analyze
+  if (crosstab.data && crosstab.data.length > 0) {
+    console.log(`Analyzing crosstab with ${crosstab.data.length} data points using local analyzer`);
+
+    try {
+      // Use local analyzer for comprehensive insights from actual data
+      const analysis = analyzer.analyze(crosstab);
+
+      // Format the full analysis
+      result += formatter.formatAnalysis(crosstab, analysis);
+
+      // Apply specialized templates for additional insights
+      const templateResults = templateEngine.analyzeWithTemplates(crosstab, analysis);
+
+      if (Object.keys(templateResults).length > 0) {
+        result += '\n---\n\n## Specialized Analyses\n\n';
+        Object.entries(templateResults).forEach(([name, templateAnalysis]) => {
+          result += templateEngine.formatTemplateAnalysis(name, templateAnalysis);
+          result += '\n';
+        });
+      }
+
+      return result;
+    } catch (error) {
+      console.error('Local analysis error:', error);
+      // Fall back to Spark API if local analysis fails
+    }
+  }
+
+  // Fall back to Spark API if no data or local analysis failed
+  if (sparkClient) {
+    console.log('Falling back to Spark API for analysis');
+    const marketStr = context.markets.length > 0 ? context.markets.slice(0, 3).join(', ') : 'global';
+    const audienceStr = context.audiences.length > 0 ? context.audiences.join(', ') : 'internet users';
+    const topicsStr = context.rows.length > 0 ? context.rows.slice(0, 5).join(', ') : 'general consumer behavior';
+
+    const prompt = `Provide detailed consumer insights for ${audienceStr} in ${marketStr} about ${topicsStr}. Include specific percentages, comparisons to average, and actionable findings.`;
+
+    try {
+      const response = await sparkClient.query(prompt);
+      result += response.formattedText;
+      return result;
+    } catch (error) {
+      console.error('Spark analysis error:', error);
+      return result + `\n*Analysis unavailable: ${error instanceof Error ? error.message : 'Unknown error'}*`;
+    }
+  }
+
+  return result + '\n*No data available for analysis. Please ensure the crosstab has been fully processed.*';
 }
 
 // Build context object from crosstab definition
