@@ -1,24 +1,60 @@
 // Spark API Client for AI-powered GWI queries
+// Based on: https://api.globalwebindex.com/docs/spark-api/reference/chat/chat-with-the-service
+
+// API Response Types
+export interface SparkInsight {
+  id: string;
+  text: string;
+}
+
+export interface SparkSource {
+  topics?: string[];
+  audiences?: Array<{ id: string; name: string; description: string }>;
+  datasets?: Array<{ code: string; name: string }>;
+  locations?: Array<{ code: string; name: string }>;
+  waves?: Array<{ code: string; name: string }>;
+}
+
+export interface SparkAPIResponse {
+  message: string;
+  insights: SparkInsight[];
+  chat_id: string;
+  sources: SparkSource;
+}
 
 export interface SparkResponse {
-  response: string;
-  sources?: string[];
-  confidence?: number;
-  chatId?: string;
+  message: string;
+  insights: SparkInsight[];
+  chatId: string;
+  sources: SparkSource;
+  formattedText: string;
 }
 
 export interface SparkQueryOptions {
-  includeContext?: boolean;
-  maxTokens?: number;
+  chat_id?: string;
+  docked_audiences?: string[];
+}
+
+export interface InsightDetail {
+  insight: {
+    id: string;
+    text: string;
+    metrics: string[];
+  };
+  calculations: Array<{
+    percentage: number;
+    index: number;
+    sample: number;
+  }>;
 }
 
 export class SparkAPIClient {
   private baseUrl: string;
   private apiKey: string;
+  private currentChatId: string | null = null;
 
   constructor(apiKey: string, useAlphaEnv: boolean = true) {
     this.apiKey = apiKey;
-    // Use alpha environment by default
     this.baseUrl = useAlphaEnv
       ? 'https://api-alpha.globalwebindex.com'
       : 'https://api.globalwebindex.com';
@@ -26,11 +62,26 @@ export class SparkAPIClient {
 
   /**
    * Send a natural language query to the Spark API
+   * POST /v1/spark-api/generic
    */
   async query(prompt: string, options?: SparkQueryOptions): Promise<SparkResponse> {
     const url = `${this.baseUrl}/v1/spark-api/generic`;
     console.log(`Spark API request to: ${url}`);
     console.log(`Spark API prompt: ${prompt}`);
+
+    const requestBody: Record<string, unknown> = { prompt };
+
+    // Include chat_id for conversation continuity
+    if (options?.chat_id) {
+      requestBody.chat_id = options.chat_id;
+    } else if (this.currentChatId) {
+      requestBody.chat_id = this.currentChatId;
+    }
+
+    // Include docked audiences if provided
+    if (options?.docked_audiences) {
+      requestBody.docked_audiences = options.docked_audiences;
+    }
 
     const response = await fetch(url, {
       method: 'POST',
@@ -38,10 +89,7 @@ export class SparkAPIClient {
         'Authorization': this.apiKey,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        prompt,
-        ...options,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
@@ -49,62 +97,112 @@ export class SparkAPIClient {
       throw new Error(`Spark API error (${response.status}): ${errorText}`);
     }
 
-    const data = await response.json();
-    console.log('Spark API raw response:', JSON.stringify(data, null, 2).substring(0, 1000));
+    const data: SparkAPIResponse = await response.json();
+    console.log('Spark API raw response:', JSON.stringify(data, null, 2).substring(0, 2000));
 
-    // Handle the actual Spark API response format
-    let responseText = '';
-
-    // Try various response fields
-    if (data.message && data.message.length > 0) {
-      responseText = data.message;
-    } else if (data.response) {
-      responseText = data.response;
-    } else if (data.answer) {
-      responseText = data.answer;
-    } else if (data.result) {
-      responseText = data.result;
-    } else if (data.insights && Array.isArray(data.insights) && data.insights.length > 0) {
-      // Format insights array into readable text
-      responseText = data.insights.map((insight: any) => {
-        if (typeof insight === 'string') return insight;
-        return insight.text || insight.message || insight.content || JSON.stringify(insight);
-      }).join('\n\n');
+    // Store chat_id for conversation continuity
+    if (data.chat_id) {
+      this.currentChatId = data.chat_id;
     }
 
-    // If still empty, show helpful message
-    if (!responseText) {
-      responseText = 'The Spark API returned an empty response. This may happen if:\n' +
-        '- The question is too broad or unclear\n' +
-        '- The data requested is not available\n' +
-        '- Try rephrasing your question with more specific details';
-      console.warn('Empty Spark response. Full data:', JSON.stringify(data));
+    // Format the response for display
+    const formattedText = this.formatResponse(data);
+
+    return {
+      message: data.message || '',
+      insights: data.insights || [],
+      chatId: data.chat_id,
+      sources: data.sources || {},
+      formattedText,
+    };
+  }
+
+  /**
+   * Format API response into readable text
+   */
+  private formatResponse(data: SparkAPIResponse): string {
+    const parts: string[] = [];
+
+    // Add main message if present
+    if (data.message && data.message.trim().length > 0) {
+      parts.push(data.message);
     }
 
-    // Extract sources - handle both string and object formats
-    const sources: string[] = [];
-    if (data.sources) {
-      ['topics', 'audiences', 'datasets', 'locations', 'waves'].forEach(key => {
-        if (data.sources[key] && Array.isArray(data.sources[key])) {
-          data.sources[key].forEach((item: any) => {
-            if (typeof item === 'string') {
-              sources.push(item);
-            } else if (item && typeof item === 'object') {
-              // Extract name or other identifying property
-              const name = item.name || item.title || item.label || item.code || item.id;
-              if (name) sources.push(name);
-            }
-          });
-        }
+    // Add insights as bullet points
+    if (data.insights && data.insights.length > 0) {
+      if (parts.length > 0) {
+        parts.push(''); // Empty line separator
+      }
+      parts.push('**Key Insights:**\n');
+      data.insights.forEach((insight, index) => {
+        parts.push(`${index + 1}. ${insight.text}`);
       });
     }
 
-    return {
-      response: responseText,
-      sources: sources.length > 0 ? sources : undefined,
-      confidence: data.confidence,
-      chatId: data.chat_id,
-    };
+    // Add sources section
+    const sourceTexts: string[] = [];
+
+    if (data.sources) {
+      if (data.sources.topics && data.sources.topics.length > 0) {
+        sourceTexts.push(`Topics: ${data.sources.topics.join(', ')}`);
+      }
+      if (data.sources.locations && data.sources.locations.length > 0) {
+        const locationNames = data.sources.locations.map(l => l.name).join(', ');
+        sourceTexts.push(`Markets: ${locationNames}`);
+      }
+      if (data.sources.waves && data.sources.waves.length > 0) {
+        const waveNames = data.sources.waves.map(w => w.name).join(', ');
+        sourceTexts.push(`Time Period: ${waveNames}`);
+      }
+      if (data.sources.datasets && data.sources.datasets.length > 0) {
+        const datasetNames = data.sources.datasets.map(d => d.name).join(', ');
+        sourceTexts.push(`Dataset: ${datasetNames}`);
+      }
+      if (data.sources.audiences && data.sources.audiences.length > 0) {
+        const audienceNames = data.sources.audiences.map(a => a.name).join(', ');
+        sourceTexts.push(`Audiences: ${audienceNames}`);
+      }
+    }
+
+    if (sourceTexts.length > 0) {
+      parts.push('');
+      parts.push('---');
+      parts.push('**Sources:**');
+      sourceTexts.forEach(s => parts.push(`- ${s}`));
+    }
+
+    // Handle empty response
+    if (parts.length === 0 || (parts.length === 1 && parts[0].trim() === '')) {
+      return 'The Spark API returned an empty response. Try:\n' +
+        '- Being more specific with your question\n' +
+        '- Including a market (e.g., "in the UK")\n' +
+        '- Specifying an audience (e.g., "among Gen Z")';
+    }
+
+    return parts.join('\n');
+  }
+
+  /**
+   * Get detailed information about a specific insight
+   * GET /v1/spark-api/generic/insights/{id}
+   */
+  async getInsightDetails(insightId: string): Promise<InsightDetail> {
+    const url = `${this.baseUrl}/v1/spark-api/generic/insights/${insightId}`;
+    console.log(`Fetching insight details: ${url}`);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': this.apiKey,
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Spark API error (${response.status}): ${errorText}`);
+    }
+
+    return await response.json();
   }
 
   /**
@@ -133,11 +231,17 @@ export class SparkAPIClient {
   }
 
   /**
+   * Start a new conversation (clear chat_id)
+   */
+  clearConversation(): void {
+    this.currentChatId = null;
+  }
+
+  /**
    * Check if the API is available
    */
   async healthCheck(): Promise<boolean> {
     try {
-      // Simple test query
       await this.query('What is GWI?');
       return true;
     } catch {
@@ -213,20 +317,8 @@ export function shouldUseSparkAPI(message: string): boolean {
 }
 
 /**
- * Format Spark API response for display
+ * Format Spark API response for display (legacy compatibility)
  */
 export function formatSparkResponse(response: SparkResponse): string {
-  let output = response.response;
-
-  if (response.sources && response.sources.length > 0) {
-    output += '\n\n---\n**Sources:** ' + response.sources.join(', ');
-  }
-
-  if (response.confidence !== undefined) {
-    const confidenceLabel = response.confidence > 0.8 ? 'High' :
-                           response.confidence > 0.5 ? 'Medium' : 'Low';
-    output += `\n\n*Confidence: ${confidenceLabel}*`;
-  }
-
-  return output;
+  return response.formattedText;
 }
