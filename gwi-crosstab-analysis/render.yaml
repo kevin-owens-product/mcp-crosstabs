@@ -1,0 +1,16 @@
+# render.yaml - Render Blueprint for GWI Crosstab Analysis
+# https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: gwi-crosstab-analysis
+    runtime: node
+    buildCommand: npm run render-build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: GWI_API_KEY
+        sync: false  # Set this manually in Render dashboard
+      - key: PORT
+        value: 10000

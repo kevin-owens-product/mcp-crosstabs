@@ -1,0 +1,57 @@
+import ReactMarkdown from 'react-markdown';
+import type { ChatMessage } from '@/lib/types';
+
+interface MessageBubbleProps {
+  message: ChatMessage;
+}
+
+const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
+  const isUser = message.role === 'user';
+
+  return (
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+      <div className={`max-w-3xl ${isUser ? 'order-2' : 'order-1'}`}>
+        <div
+          className={`rounded-lg p-4 ${
+            isUser
+              ? 'bg-gwi-blue text-white'
+              : 'bg-white border border-gray-200'
+          }`}
+        >
+          {isUser ? (
+            <div className="whitespace-pre-wrap">{message.content}</div>
+          ) : (
+            <ReactMarkdown
+              className="prose prose-sm max-w-none"
+              components={{
+                h1: ({ ...props }) => <h1 className="text-2xl font-bold mt-4 mb-2" {...props} />,
+                h2: ({ ...props }) => <h2 className="text-xl font-bold mt-3 mb-2" {...props} />,
+                h3: ({ ...props }) => <h3 className="text-lg font-semibold mt-2 mb-1" {...props} />,
+                ul: ({ ...props }) => <ul className="list-disc list-inside my-2" {...props} />,
+                ol: ({ ...props }) => <ol className="list-decimal list-inside my-2" {...props} />,
+                li: ({ ...props }) => <li className="my-1" {...props} />,
+                p: ({ ...props }) => <p className="my-2" {...props} />,
+                strong: ({ ...props }) => <strong className="font-semibold" {...props} />,
+                code: ({ className, children, ...props }) => {
+                  const isInline = !className;
+                  return isInline ? (
+                    <code className="bg-gray-100 px-1 rounded text-sm" {...props}>{children}</code>
+                  ) : (
+                    <code className="block bg-gray-100 p-2 rounded my-2 text-sm" {...props}>{children}</code>
+                  );
+                },
+              }}
+            >
+              {message.content}
+            </ReactMarkdown>
+          )}
+        </div>
+        <div className="text-xs text-gray-500 mt-1 px-2">
+          {message.timestamp.toLocaleTimeString()}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default MessageBubble;
