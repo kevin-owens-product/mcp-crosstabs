@@ -541,46 +541,41 @@ async function handleAnalyzeIntent(crosstabId: string): Promise<string> {
 
 // Analyze crosstab using Spark/MCP API
 async function analyzeWithSpark(crosstab: any): Promise<string> {
-  // Build context from crosstab definition
   const context = buildCrosstabContext(crosstab);
 
-  // Build a prompt that asks for analysis
-  const prompt = `Analyze this crosstab and provide key insights:
-Name: ${crosstab.name}
-${context.markets.length > 0 ? `Markets: ${context.markets.join(', ')}` : ''}
-${context.waves.length > 0 ? `Time Period: ${context.waves.join(', ')}` : ''}
-${context.audiences.length > 0 ? `Audiences: ${context.audiences.join(', ')}` : ''}
-${context.rows.length > 0 ? `Analyzing: ${context.rows.join(', ')}` : ''}
+  // Build a detailed prompt for comprehensive analysis
+  const marketStr = context.markets.length > 0 ? context.markets.slice(0, 3).join(', ') : 'global';
+  const audienceStr = context.audiences.length > 0 ? context.audiences.join(', ') : 'internet users';
+  const topicsStr = context.rows.length > 0 ? context.rows.slice(0, 5).join(', ') : 'general consumer behavior';
 
-Please provide insights about these topics for the specified markets and audiences.`;
+  const prompt = `Provide detailed consumer insights for ${audienceStr} in ${marketStr} about ${topicsStr}. Include specific percentages, comparisons to average, and actionable findings.`;
 
   console.log('Spark analysis prompt:', prompt);
 
   try {
     const response = await sparkClient!.query(prompt);
 
-    // Add crosstab header
-    let result = `## Analyzing: ${crosstab.name}\n\n`;
+    // Build formatted result
+    let result = `## ${crosstab.name}\n\n`;
 
+    // Add context header
+    const contextParts: string[] = [];
     if (context.markets.length > 0) {
-      result += `**Markets:** ${context.markets.slice(0, 5).join(', ')}`;
-      if (context.markets.length > 5) {
-        result += ` and ${context.markets.length - 5} more`;
-      }
-      result += '\n';
+      const mkts = context.markets.slice(0, 5).join(', ');
+      contextParts.push(`**Markets:** ${mkts}${context.markets.length > 5 ? ` +${context.markets.length - 5} more` : ''}`);
     }
-
     if (context.waves.length > 0) {
-      result += `**Time Period:** ${context.waves.join(', ')}\n`;
+      contextParts.push(`**Period:** ${context.waves.join(', ')}`);
     }
-
     if (context.audiences.length > 0) {
-      result += `**Audiences:** ${context.audiences.join(', ')}\n`;
+      contextParts.push(`**Audience:** ${context.audiences.join(', ')}`);
     }
 
-    result += '\n---\n\n';
-    result += response.formattedText;
+    if (contextParts.length > 0) {
+      result += contextParts.join(' | ') + '\n\n---\n\n';
+    }
 
+    result += response.formattedText;
     return result;
   } catch (error) {
     console.error('Spark analysis error:', error);
