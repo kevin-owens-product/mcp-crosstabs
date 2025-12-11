@@ -168,52 +168,94 @@ export class SparkAPIClient {
    * Parse the text response from chat_gwi tool
    * Format: Insight ID: <uuid> Content: <text>
    */
-  private parseChatGWIResponse(text: string): ChatGWIResult {
+  private parseChatGWIResponse(rawText: string): ChatGWIResult {
     let chatId = '';
     const insights: Array<{ id: string; content: string }> = [];
     const sources: SparkSource = {};
+
+    // Normalize line endings and whitespace
+    const text = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+    console.log('Parsing MCP response, length:', text.length);
+    console.log('First 200 chars:', text.substring(0, 200));
 
     // Extract Chat ID (format: "Chat ID: <uuid>")
     const chatIdMatch = text.match(/Chat ID:\s*([a-f0-9-]{36})/i);
     if (chatIdMatch) {
       chatId = chatIdMatch[1];
+      console.log('Found Chat ID:', chatId);
     }
 
-    // Extract insights with ID and Content (format: "Insight ID: <uuid> Content: <text>")
-    const insightPattern = /Insight ID:\s*([a-f0-9-]{36})\s*Content:\s*([^\n]+)/gi;
+    // Extract insights - try multiple patterns
+    // Pattern 1: "Insight ID: <uuid> Content: <text>" with any whitespace
+    const insightPattern = /Insight\s+ID:\s*([a-f0-9-]{36})\s+Content:\s*(.+?)(?=\nInsight\s+ID:|\nSources|\nProcessing|$)/gis;
+
     let match;
     while ((match = insightPattern.exec(text)) !== null) {
-      insights.push({
-        id: match[1],
-        content: match[2].trim()
-      });
+      const content = match[2].trim().replace(/\n/g, ' ');
+      if (content.length > 0) {
+        insights.push({
+          id: match[1],
+          content: content
+        });
+      }
+    }
+
+    // If no insights found, try a simpler line-by-line pattern
+    if (insights.length === 0) {
+      console.log('No insights found with first pattern, trying fallback...');
+      const lines = text.split('\n');
+      for (const line of lines) {
+        const lineMatch = line.match(/Insight\s+ID:\s*([a-f0-9-]{36})\s+Content:\s*(.+)/i);
+        if (lineMatch) {
+          insights.push({
+            id: lineMatch[1],
+            content: lineMatch[2].trim()
+          });
+        }
+      }
+    }
+
+    console.log('Parsed insights count:', insights.length);
+    if (insights.length > 0) {
+      console.log('First insight:', JSON.stringify(insights[0]));
+    } else {
+      // Log a sample of the text to help debug
+      console.log('No insights found. Sample text around "Insight":',
+        text.includes('Insight') ? text.substring(text.indexOf('Insight'), text.indexOf('Insight') + 150) : 'No "Insight" found');
     }
 
     // Extract source information
     const topicsMatch = text.match(/Topics:\s*([^\n]+)/i);
     if (topicsMatch) {
-      sources.topics = topicsMatch[1].split(',').map(t => t.trim()).filter(t => t.length > 0);
+      // Stop at "Datasets" if present
+      let topicsText = topicsMatch[1];
+      const datasetsIndex = topicsText.indexOf('Datasets');
+      if (datasetsIndex > 0) {
+        topicsText = topicsText.substring(0, datasetsIndex);
+      }
+      sources.topics = topicsText.split(',').map(t => t.trim()).filter(t => t.length > 0 && t !== 'Datasets');
     }
 
-    const datasetsMatch = text.match(/Datasets:\s*([^\n]+)/i);
+    const datasetsMatch = text.match(/Datasets:\s*([^\n]+?)(?=\s*Locations:|$)/i);
     if (datasetsMatch) {
       // Parse "GWI Core (ds-core)" format
       const datasetParts = datasetsMatch[1].split(',').map(d => {
-        const match = d.trim().match(/(.+?)\s*\(([^)]+)\)/);
-        if (match) {
-          return { name: match[1].trim(), code: match[2].trim() };
+        const m = d.trim().match(/(.+?)\s*\(([^)]+)\)/);
+        if (m) {
+          return { name: m[1].trim(), code: m[2].trim() };
         }
         return { name: d.trim(), code: d.trim() };
-      });
+      }).filter(d => d.name.length > 0 && !d.name.startsWith('Locations'));
       sources.datasets = datasetParts;
     }
 
-    const locationsMatch = text.match(/Locations:\s*([^\n]+)/i);
+    const locationsMatch = text.match(/Locations:\s*([^\n]+?)(?=\s*Time periods:|$)/i);
     if (locationsMatch) {
       sources.locations = locationsMatch[1].split(',').map(l => ({
         code: l.trim(),
         name: l.trim()
-      }));
+      })).filter(l => l.name.length > 0 && !l.name.startsWith('Time'));
     }
 
     const wavesMatch = text.match(/Time periods:\s*([^\n]+)/i);
@@ -221,8 +263,10 @@ export class SparkAPIClient {
       sources.waves = wavesMatch[1].split(',').map(w => ({
         code: w.trim(),
         name: w.trim()
-      }));
+      })).filter(w => w.name.length > 0);
     }
+
+    console.log('Parsed sources:', JSON.stringify(sources, null, 2).substring(0, 500));
 
     return {
       response: text,
