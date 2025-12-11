@@ -519,33 +519,131 @@ async function handleAnalyzeIntent(crosstabId: string): Promise<string> {
 
   let crosstab;
   try {
-    crosstab = await orchestrator.client.getCrosstab(crosstabId);
+    // Fetch crosstab definition (without data - it returns definition only anyway)
+    crosstab = await orchestrator.client.getCrosstab(crosstabId, false);
   } catch (error) {
     console.error(`Failed to fetch crosstab ${crosstabId}:`, error);
     return `Failed to fetch crosstab with ID: ${crosstabId}\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}\n\nPlease check:\n- The crosstab ID is correct\n- Your API key has access to this crosstab`;
   }
 
-  if (!crosstab || !crosstab.data || crosstab.data.length === 0) {
-    return `Crosstab found but contains no data. This may happen if:\n- The crosstab hasn't been run yet\n- The data export is still processing\n\nCrosstab ID: ${crosstabId}`;
+  if (!crosstab) {
+    return `Crosstab not found with ID: ${crosstabId}`;
   }
 
-  const baseAnalysis = analyzer.analyze(crosstab);
-
-  let response = formatter.formatAnalysis(crosstab, baseAnalysis);
-
-  // Apply templates
-  const templateResults = templateEngine.analyzeWithTemplates(crosstab, baseAnalysis);
-
-  if (Object.keys(templateResults).length > 0) {
-    response += '\n\n---\n\n# Specialized Analyses\n\n';
-
-    Object.entries(templateResults).forEach(([name, analysis]) => {
-      response += templateEngine.formatTemplateAnalysis(name, analysis);
-      response += '\n---\n\n';
-    });
+  // Use Spark/MCP API for analysis with crosstab context
+  if (sparkClient) {
+    return await analyzeWithSpark(crosstab);
   }
 
-  return response;
+  // Fallback: Return crosstab structure summary if Spark not available
+  return formatCrosstabSummary(crosstab);
+}
+
+// Analyze crosstab using Spark/MCP API
+async function analyzeWithSpark(crosstab: any): Promise<string> {
+  // Build context from crosstab definition
+  const context = buildCrosstabContext(crosstab);
+
+  // Build a prompt that asks for analysis
+  const prompt = `Analyze this crosstab and provide key insights:
+Name: ${crosstab.name}
+${context.markets.length > 0 ? `Markets: ${context.markets.join(', ')}` : ''}
+${context.waves.length > 0 ? `Time Period: ${context.waves.join(', ')}` : ''}
+${context.audiences.length > 0 ? `Audiences: ${context.audiences.join(', ')}` : ''}
+${context.rows.length > 0 ? `Analyzing: ${context.rows.join(', ')}` : ''}
+
+Please provide insights about these topics for the specified markets and audiences.`;
+
+  console.log('Spark analysis prompt:', prompt);
+
+  try {
+    const response = await sparkClient!.query(prompt);
+
+    // Add crosstab header
+    let result = `## Analyzing: ${crosstab.name}\n\n`;
+
+    if (context.markets.length > 0) {
+      result += `**Markets:** ${context.markets.slice(0, 5).join(', ')}`;
+      if (context.markets.length > 5) {
+        result += ` and ${context.markets.length - 5} more`;
+      }
+      result += '\n';
+    }
+
+    if (context.waves.length > 0) {
+      result += `**Time Period:** ${context.waves.join(', ')}\n`;
+    }
+
+    if (context.audiences.length > 0) {
+      result += `**Audiences:** ${context.audiences.join(', ')}\n`;
+    }
+
+    result += '\n---\n\n';
+    result += response.formattedText;
+
+    return result;
+  } catch (error) {
+    console.error('Spark analysis error:', error);
+    return `Failed to analyze crosstab: ${error instanceof Error ? error.message : 'Unknown error'}`;
+  }
+}
+
+// Build context object from crosstab definition
+function buildCrosstabContext(crosstab: any): {
+  markets: string[];
+  waves: string[];
+  audiences: string[];
+  rows: string[];
+  columns: string[];
+} {
+  const markets = crosstab.country_codes || [];
+  const waves = crosstab.wave_codes || [];
+  const audiences = (crosstab.bases || []).map((b: any) => b.name || b.full_name).filter(Boolean);
+  const rows = (crosstab.rows || []).map((r: any) => r.name || r.full_name).filter(Boolean);
+  const columns = (crosstab.columns || []).map((c: any) => c.name || c.full_name).filter(Boolean);
+
+  return { markets, waves, audiences, rows, columns };
+}
+
+// Format crosstab summary when Spark is not available
+function formatCrosstabSummary(crosstab: any): string {
+  const context = buildCrosstabContext(crosstab);
+
+  let summary = `## ${crosstab.name}\n\n`;
+
+  if (context.markets.length > 0) {
+    summary += `**Markets:** ${context.markets.join(', ')}\n`;
+  }
+
+  if (context.waves.length > 0) {
+    summary += `**Time Period:** ${context.waves.join(', ')}\n`;
+  }
+
+  if (context.audiences.length > 0) {
+    summary += `\n### Audiences\n`;
+    context.audiences.forEach(a => summary += `- ${a}\n`);
+  }
+
+  if (context.rows.length > 0) {
+    summary += `\n### Row Variables\n`;
+    context.rows.slice(0, 10).forEach(r => summary += `- ${r}\n`);
+    if (context.rows.length > 10) {
+      summary += `- ... and ${context.rows.length - 10} more\n`;
+    }
+  }
+
+  if (context.columns.length > 0) {
+    summary += `\n### Column Variables\n`;
+    context.columns.slice(0, 10).forEach(c => summary += `- ${c}\n`);
+    if (context.columns.length > 10) {
+      summary += `- ... and ${context.columns.length - 10} more\n`;
+    }
+  }
+
+  summary += '\n---\n';
+  summary += '\n*Note: For detailed insights, please ensure the GWI_MCP_KEY is configured.*';
+
+  return summary;
 }
 
 async function handleSearchAndAnalyzeIntent(searchTerm: string): Promise<string> {
