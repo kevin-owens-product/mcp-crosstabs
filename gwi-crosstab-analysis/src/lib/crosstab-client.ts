@@ -1,11 +1,14 @@
 import type { Crosstab, CrosstabSummary, CrosstabDataRow } from './types';
 
 export class GWICrosstabClient {
-  private baseUrl: string = 'https://api.globalwebindex.com';
+  private baseUrl: string;
   private apiKey: string;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, useAlphaEnv: boolean = true) {
     this.apiKey = apiKey;
+    this.baseUrl = useAlphaEnv
+      ? 'https://api-alpha.globalwebindex.com'
+      : 'https://api.globalwebindex.com';
   }
 
   /**
