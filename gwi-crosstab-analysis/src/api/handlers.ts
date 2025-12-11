@@ -3,16 +3,23 @@ import { CrosstabAnalysisOrchestrator } from '../lib/orchestrator';
 import { TemplateAnalysisEngine } from '../lib/analysis-templates';
 import { CrosstabAnalyzer } from '../lib/crosstab-analyzer';
 import { ResponseFormatter } from '../lib/response-formatter';
+import { SparkAPIClient, shouldUseSparkAPI, formatSparkResponse } from '../lib/spark-client';
 
 // Initialize services
-const API_KEY = process.env.GWI_API_KEY!;
+const API_KEY = process.env.GWI_API_KEY;
+const SPARK_API_KEY = process.env.GWI_MCP_KEY;
 
 if (!API_KEY) {
-  console.error('GWI_API_KEY not found in environment variables');
-  process.exit(1);
+  console.warn('GWI_API_KEY not found - crosstab features will be unavailable');
 }
 
-const orchestrator = new CrosstabAnalysisOrchestrator(API_KEY);
+if (!SPARK_API_KEY) {
+  console.warn('GWI_MCP_KEY not found - Spark AI features will be unavailable');
+}
+
+// Initialize clients (may be null if keys not provided)
+const orchestrator = API_KEY ? new CrosstabAnalysisOrchestrator(API_KEY) : null;
+const sparkClient = SPARK_API_KEY ? new SparkAPIClient(SPARK_API_KEY) : null;
 const templateEngine = new TemplateAnalysisEngine();
 const analyzer = new CrosstabAnalyzer();
 const formatter = new ResponseFormatter();
@@ -35,6 +42,10 @@ function setCache(key: string, data: unknown) {
 
 // Handler: List all crosstabs
 export async function listCrosstabs(_req: Request, res: Response) {
+  if (!orchestrator) {
+    return res.status(503).json({ error: 'Crosstab API not configured' });
+  }
+
   try {
     const cached = getFromCache('crosstabs-list');
     if (cached) {
@@ -56,6 +67,10 @@ export async function listCrosstabs(_req: Request, res: Response) {
 
 // Handler: Search crosstabs
 export async function searchCrosstabs(req: Request, res: Response) {
+  if (!orchestrator) {
+    return res.status(503).json({ error: 'Crosstab API not configured' });
+  }
+
   try {
     const { q } = req.query;
 
@@ -77,6 +92,10 @@ export async function searchCrosstabs(req: Request, res: Response) {
 
 // Handler: Get specific crosstab
 export async function getCrosstab(req: Request, res: Response) {
+  if (!orchestrator) {
+    return res.status(503).json({ error: 'Crosstab API not configured' });
+  }
+
   try {
     const { id } = req.params;
     const includeData = req.query.includeData !== 'false';
@@ -107,6 +126,10 @@ export async function getCrosstab(req: Request, res: Response) {
 
 // Handler: Analyze crosstab
 export async function analyzeCrosstab(req: Request, res: Response) {
+  if (!orchestrator) {
+    return res.status(503).json({ error: 'Crosstab API not configured' });
+  }
+
   try {
     const { crosstabId, applyTemplates = true } = req.body;
 
@@ -165,35 +188,56 @@ export async function handleChatMessage(req: Request, res: Response) {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    // Determine intent
-    const intent = classifyIntent(message, crosstabId);
+    // Check if this should go to Spark API
+    const useSparkAPI = shouldUseSparkAPI(message) && sparkClient;
 
     let response = '';
-    const analysisType = intent.type;
+    let analysisType = 'unknown';
 
-    switch (intent.type) {
-      case 'list_crosstabs':
-        response = await handleListIntent(intent.searchTerm);
-        break;
+    if (useSparkAPI && !crosstabId) {
+      // Use Spark API for general GWI data questions
+      response = await handleSparkQuery(message);
+      analysisType = 'spark_query';
+    } else {
+      // Use Platform API for crosstab-specific queries
+      const intent = classifyIntent(message, crosstabId);
+      analysisType = intent.type;
 
-      case 'analyze_crosstab':
-        response = await handleAnalyzeIntent(intent.crosstabId || crosstabId);
-        break;
+      switch (intent.type) {
+        case 'list_crosstabs':
+          response = await handleListIntent(intent.searchTerm);
+          break;
 
-      case 'search_and_analyze':
-        response = await handleSearchAndAnalyzeIntent(intent.searchTerm!);
-        break;
+        case 'analyze_crosstab':
+          response = await handleAnalyzeIntent(intent.crosstabId || crosstabId);
+          break;
 
-      case 'compare_crosstabs':
-        response = await handleCompareIntent();
-        break;
+        case 'search_and_analyze':
+          response = await handleSearchAndAnalyzeIntent(intent.searchTerm!);
+          break;
 
-      case 'help':
-        response = getHelpResponse();
-        break;
+        case 'compare_crosstabs':
+          response = await handleCompareIntent();
+          break;
 
-      default:
-        response = 'I understand you want to analyze crosstabs. Could you be more specific? For example:\n- "List my crosstabs"\n- "Analyze [crosstab name]"\n- "Compare [crosstab 1] vs [crosstab 2]"';
+        case 'spark_query':
+          response = await handleSparkQuery(message, crosstabId);
+          analysisType = 'spark_query';
+          break;
+
+        case 'help':
+          response = getHelpResponse();
+          break;
+
+        default:
+          // Try Spark API for unknown intents if available
+          if (sparkClient) {
+            response = await handleSparkQuery(message, crosstabId);
+            analysisType = 'spark_query';
+          } else {
+            response = 'I understand you want to analyze data. Could you be more specific? For example:\n- "List my crosstabs"\n- "Analyze [crosstab name]"\n- "What percentage of Gen Z use TikTok daily?"';
+          }
+      }
     }
 
     res.json({
@@ -212,7 +256,7 @@ export async function handleChatMessage(req: Request, res: Response) {
 
 // Intent classification
 interface Intent {
-  type: 'list_crosstabs' | 'analyze_crosstab' | 'search_and_analyze' | 'compare_crosstabs' | 'help' | 'unknown';
+  type: 'list_crosstabs' | 'analyze_crosstab' | 'search_and_analyze' | 'compare_crosstabs' | 'spark_query' | 'help' | 'unknown';
   searchTerm?: string;
   crosstabId?: string;
 }
@@ -229,21 +273,27 @@ function classifyIntent(message: string, crosstabId?: string | null): Intent {
     };
   }
 
+  // What crosstabs do I have
+  if (lower.includes('what crosstabs') || lower.includes('my crosstabs')) {
+    return { type: 'list_crosstabs' };
+  }
+
   // Compare
   if (lower.includes('compare') || lower.includes('vs') || lower.includes('versus')) {
     return { type: 'compare_crosstabs' };
   }
 
   // Analyze specific (with context)
-  if (crosstabId && (lower.includes('analyze') || lower.includes('tell me about') || lower.includes('show me'))) {
+  if (crosstabId && (lower.includes('analyze') || lower.includes('tell me about') || lower.includes('insights'))) {
     return { type: 'analyze_crosstab', crosstabId };
   }
 
   // Search and analyze
-  if (lower.includes('analyze') || lower.includes('look at') || lower.includes('show me')) {
-    // Extract search term
-    const searchTerm = message.replace(/analyze|look at|show me|the|my/gi, '').trim();
-    return { type: 'search_and_analyze', searchTerm };
+  if (lower.includes('analyze') || lower.includes('look at')) {
+    const searchTerm = message.replace(/analyze|look at|the|my/gi, '').trim();
+    if (searchTerm.length > 2) {
+      return { type: 'search_and_analyze', searchTerm };
+    }
   }
 
   // Help
@@ -251,11 +301,54 @@ function classifyIntent(message: string, crosstabId?: string | null): Intent {
     return { type: 'help' };
   }
 
+  // Check if it's a Spark API query
+  if (shouldUseSparkAPI(message)) {
+    return { type: 'spark_query' };
+  }
+
   return { type: 'unknown' };
+}
+
+// Spark API query handler
+async function handleSparkQuery(message: string, crosstabId?: string | null): Promise<string> {
+  if (!sparkClient) {
+    return 'The Spark AI feature is not configured. Please add the GWI_MCP_KEY environment variable to enable AI-powered queries about GWI data.';
+  }
+
+  try {
+    // If we have a crosstab context, enrich the query
+    let context;
+    if (crosstabId && orchestrator) {
+      try {
+        const crosstab = await orchestrator.client.getCrosstab(crosstabId, false);
+        context = {
+          name: crosstab.name,
+          markets: crosstab.country_codes,
+          waves: crosstab.wave_codes,
+          audience: crosstab.bases?.[0]?.name,
+        };
+      } catch {
+        // Ignore crosstab fetch errors, proceed without context
+      }
+    }
+
+    const sparkResponse = context
+      ? await sparkClient.queryWithContext(message, context)
+      : await sparkClient.query(message);
+
+    return formatSparkResponse(sparkResponse);
+  } catch (error) {
+    console.error('Spark API error:', error);
+    return `I encountered an error querying GWI data: ${error instanceof Error ? error.message : 'Unknown error'}. Please try rephrasing your question.`;
+  }
 }
 
 // Intent handlers
 async function handleListIntent(searchTerm?: string): Promise<string> {
+  if (!orchestrator) {
+    return 'The crosstab feature is not configured. Please add the GWI_API_KEY environment variable.';
+  }
+
   const crosstabs = searchTerm
     ? await orchestrator.client.searchCrosstabs(searchTerm)
     : await orchestrator.client.listCrosstabs();
@@ -285,6 +378,10 @@ async function handleListIntent(searchTerm?: string): Promise<string> {
 }
 
 async function handleAnalyzeIntent(crosstabId: string): Promise<string> {
+  if (!orchestrator) {
+    return 'The crosstab feature is not configured. Please add the GWI_API_KEY environment variable.';
+  }
+
   if (!crosstabId) {
     return 'Please select a crosstab from the sidebar or specify which one you want to analyze.';
   }
@@ -310,9 +407,17 @@ async function handleAnalyzeIntent(crosstabId: string): Promise<string> {
 }
 
 async function handleSearchAndAnalyzeIntent(searchTerm: string): Promise<string> {
+  if (!orchestrator) {
+    return 'The crosstab feature is not configured. Please add the GWI_API_KEY environment variable.';
+  }
+
   const results = await orchestrator.client.searchCrosstabs(searchTerm);
 
   if (results.length === 0) {
+    // No crosstabs found - try Spark API if available
+    if (sparkClient) {
+      return handleSparkQuery(`Tell me about ${searchTerm}`);
+    }
     return `No crosstabs found matching "${searchTerm}". Try a different search term.`;
   }
 
@@ -331,37 +436,46 @@ async function handleSearchAndAnalyzeIntent(searchTerm: string): Promise<string>
 }
 
 async function handleCompareIntent(): Promise<string> {
-  // This would need more sophisticated logic
   return 'Comparison feature coming soon! For now, you can analyze each crosstab separately.';
 }
 
 function getHelpResponse(): string {
-  return `# How to Use GWI Crosstab Analysis
+  const hasSparkAPI = !!sparkClient;
+  const hasCrosstabAPI = !!orchestrator;
 
-I can help you analyze your crosstabs in natural language. Here are some things you can ask:
+  let response = `# How to Use GWI Crosstab Analysis
 
-## List & Search
+I can help you with GWI data in multiple ways:\n\n`;
+
+  if (hasCrosstabAPI) {
+    response += `## Crosstab Analysis
 - "What crosstabs do I have?"
 - "Show me social media crosstabs"
-- "List crosstabs about Tesla"
-
-## Analysis
 - "Analyze [crosstab name]"
-- "Tell me about my Gen Z crosstab"
-- "What are the key insights from [crosstab]?"
+- "What are the key insights?"
+- Click a crosstab in the sidebar to set context\n\n`;
+  }
 
-## Market Analysis
-- "Compare UK vs Germany"
-- "Show me market differences"
+  if (hasSparkAPI) {
+    response += `## AI-Powered GWI Queries
+Ask questions about GWI data in natural language:
+- "What percentage of Gen Z use TikTok daily?"
+- "How do millennials in the UK differ from Germany?"
+- "What are the top social platforms for gamers?"
+- "Compare attitudes toward sustainability by age group"
+- "What drives purchase decisions for luxury brands?"\n\n`;
+  }
 
-## Trends
-- "How has this changed over time?"
-- "What are the trends?"
+  response += `## Tips
+- I'll automatically route your question to the right data source
+- For crosstab analysis, select one from the sidebar first
+- For general GWI questions, just ask naturally\n\n`;
 
-## Tips
-- Click a crosstab in the sidebar to set context
-- I'll automatically apply specialized analysis templates
-- All analyses include statistical significance checking
+  if (!hasCrosstabAPI && !hasSparkAPI) {
+    response += `**Note**: No API keys are configured. Please add GWI_API_KEY and/or GWI_MCP_KEY environment variables.\n`;
+  }
 
-What would you like to explore?`;
+  response += `What would you like to explore?`;
+
+  return response;
 }

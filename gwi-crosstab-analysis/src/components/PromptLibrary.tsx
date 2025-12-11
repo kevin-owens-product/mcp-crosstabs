@@ -225,6 +225,74 @@ const promptCategories: PromptCategory[] = [
         description: 'Identify growth opportunities'
       }
     ]
+  },
+  {
+    id: 'spark',
+    name: 'GWI Data Queries',
+    icon: 'spark',
+    description: 'AI-powered questions about GWI data',
+    prompts: [
+      {
+        id: 'sp1',
+        title: 'Gen Z Social Media',
+        prompt: 'What percentage of Gen Z use TikTok daily?',
+        description: 'Social media usage by generation'
+      },
+      {
+        id: 'sp2',
+        title: 'Millennial Comparison',
+        prompt: 'How do millennials in the UK differ from Germany?',
+        description: 'Cross-market demographic comparison'
+      },
+      {
+        id: 'sp3',
+        title: 'Gamer Platforms',
+        prompt: 'What are the top social platforms for gamers?',
+        description: 'Platform preferences by interest group'
+      },
+      {
+        id: 'sp4',
+        title: 'Sustainability Attitudes',
+        prompt: 'Compare attitudes toward sustainability by age group',
+        description: 'Generational attitudes analysis'
+      },
+      {
+        id: 'sp5',
+        title: 'Luxury Purchase Drivers',
+        prompt: 'What drives purchase decisions for luxury brands?',
+        description: 'Consumer motivation insights'
+      },
+      {
+        id: 'sp6',
+        title: 'Streaming Preferences',
+        prompt: 'Which streaming services are most popular among 18-34 year olds?',
+        description: 'Entertainment consumption by age'
+      },
+      {
+        id: 'sp7',
+        title: 'Brand Discovery',
+        prompt: 'How do consumers discover new brands?',
+        description: 'Brand awareness and discovery channels'
+      },
+      {
+        id: 'sp8',
+        title: 'Global Social Trends',
+        prompt: 'What social media trends are growing globally?',
+        description: 'Worldwide social platform trends'
+      },
+      {
+        id: 'sp9',
+        title: 'Purchase Influencers',
+        prompt: 'Who influences purchase decisions for tech products?',
+        description: 'Influencer and recommendation impact'
+      },
+      {
+        id: 'sp10',
+        title: 'Work-Life Attitudes',
+        prompt: 'How have attitudes toward work-life balance changed?',
+        description: 'Evolving workplace sentiment'
+      }
+    ]
   }
 ];
 
@@ -257,6 +325,11 @@ const iconMap: { [key: string]: JSX.Element } = {
   lightbulb: (
     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+    </svg>
+  ),
+  spark: (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
     </svg>
   )
 };
