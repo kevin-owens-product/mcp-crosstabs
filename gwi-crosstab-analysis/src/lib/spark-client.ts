@@ -13,18 +13,26 @@ export interface SparkQueryOptions {
 }
 
 export class SparkAPIClient {
-  private baseUrl: string = 'https://api-alpha.globalwebindex.com';
+  private baseUrl: string;
   private apiKey: string;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, useAlphaEnv: boolean = false) {
     this.apiKey = apiKey;
+    // Spark API may work better on production endpoint
+    this.baseUrl = useAlphaEnv
+      ? 'https://api-alpha.globalwebindex.com'
+      : 'https://api.globalwebindex.com';
   }
 
   /**
    * Send a natural language query to the Spark API
    */
   async query(prompt: string, options?: SparkQueryOptions): Promise<SparkResponse> {
-    const response = await fetch(`${this.baseUrl}/v1/spark-api/generic`, {
+    const url = `${this.baseUrl}/v1/spark-api/generic`;
+    console.log(`Spark API request to: ${url}`);
+    console.log(`Spark API prompt: ${prompt}`);
+
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Authorization': this.apiKey,
