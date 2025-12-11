@@ -542,6 +542,16 @@ async function handleAnalyzeIntent(crosstabId: string): Promise<string> {
 
 // Analyze crosstab using full data from Platform API
 async function analyzeWithSpark(crosstab: any): Promise<string> {
+  console.log('=== analyzeWithSpark called ===');
+  console.log('Crosstab keys:', Object.keys(crosstab));
+  console.log('Has data property:', 'data' in crosstab);
+  console.log('Data is array:', Array.isArray(crosstab.data));
+  console.log('Data length:', crosstab.data?.length || 0);
+
+  if (crosstab.data && crosstab.data.length > 0) {
+    console.log('First data row sample:', JSON.stringify(crosstab.data[0], null, 2).substring(0, 500));
+  }
+
   const context = buildCrosstabContext(crosstab);
 
   // Build formatted result header
@@ -566,11 +576,14 @@ async function analyzeWithSpark(crosstab: any): Promise<string> {
 
   // Check if we have actual crosstab data to analyze
   if (crosstab.data && crosstab.data.length > 0) {
-    console.log(`Analyzing crosstab with ${crosstab.data.length} data points using local analyzer`);
+    console.log(`*** USING LOCAL ANALYZER with ${crosstab.data.length} data points ***`);
 
     try {
       // Use local analyzer for comprehensive insights from actual data
       const analysis = analyzer.analyze(crosstab);
+      console.log('Local analysis completed successfully');
+      console.log('Analysis insights count:', analysis.insights?.length || 0);
+      console.log('Analysis top indexes count:', analysis.statistics?.topIndexes?.length || 0);
 
       // Format the full analysis
       result += formatter.formatAnalysis(crosstab, analysis);
@@ -586,11 +599,15 @@ async function analyzeWithSpark(crosstab: any): Promise<string> {
         });
       }
 
+      console.log('*** LOCAL ANALYSIS RESULT LENGTH:', result.length);
       return result;
     } catch (error) {
-      console.error('Local analysis error:', error);
+      console.error('*** LOCAL ANALYSIS ERROR ***:', error);
+      console.error('Error stack:', error instanceof Error ? error.stack : 'N/A');
       // Fall back to Spark API if local analysis fails
     }
+  } else {
+    console.log('*** NO DATA - FALLING BACK TO SPARK API ***');
   }
 
   // Fall back to Spark API if no data or local analysis failed

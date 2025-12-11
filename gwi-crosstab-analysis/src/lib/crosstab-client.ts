@@ -148,12 +148,17 @@ export class GWICrosstabClient {
 
   /**
    * Parse JSON Lines format response
+   * The API can return either:
+   * 1. JSON Lines format (multiple JSON objects separated by newlines)
+   * 2. Single JSON object with data array embedded
    */
   private async parseJSONLinesResponse(response: Response): Promise<Crosstab> {
     const text = await response.text();
-    console.log('Crosstab response (first 500 chars):', text.substring(0, 500));
+    console.log('Crosstab response length:', text.length);
+    console.log('Crosstab response (first 1000 chars):', text.substring(0, 1000));
 
     const lines = text.split('\n').filter(l => l.trim());
+    console.log('Number of response lines:', lines.length);
 
     if (lines.length === 0) {
       throw new Error('Empty response from API');
@@ -161,8 +166,18 @@ export class GWICrosstabClient {
 
     // First line contains configuration
     const config = JSON.parse(lines[0]);
+    console.log('Config keys:', Object.keys(config));
 
-    // Subsequent lines are data rows
+    // Check if this is a single JSON response with embedded data
+    if (config.data && Array.isArray(config.data)) {
+      console.log(`Found embedded data array with ${config.data.length} items`);
+      return {
+        ...config,
+        id: config.uuid || config.id,
+      };
+    }
+
+    // Otherwise, parse JSON Lines format (data in subsequent lines)
     const data: CrosstabDataRow[] = [];
     for (let i = 1; i < lines.length; i++) {
       try {
@@ -171,6 +186,8 @@ export class GWICrosstabClient {
         console.warn(`Failed to parse data row ${i}:`, e);
       }
     }
+
+    console.log(`Parsed ${data.length} data rows from JSON Lines format`);
 
     return {
       ...config,
