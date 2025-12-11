@@ -4,6 +4,7 @@ export interface SparkResponse {
   response: string;
   sources?: string[];
   confidence?: number;
+  chatId?: string;
 }
 
 export interface SparkQueryOptions {
@@ -12,18 +13,26 @@ export interface SparkQueryOptions {
 }
 
 export class SparkAPIClient {
-  private baseUrl: string = 'https://api-alpha.globalwebindex.com';
+  private baseUrl: string;
   private apiKey: string;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, useAlphaEnv: boolean = true) {
     this.apiKey = apiKey;
+    // Use alpha environment by default
+    this.baseUrl = useAlphaEnv
+      ? 'https://api-alpha.globalwebindex.com'
+      : 'https://api.globalwebindex.com';
   }
 
   /**
    * Send a natural language query to the Spark API
    */
   async query(prompt: string, options?: SparkQueryOptions): Promise<SparkResponse> {
-    const response = await fetch(`${this.baseUrl}/v1/spark-api/generic`, {
+    const url = `${this.baseUrl}/v1/spark-api/generic`;
+    console.log(`Spark API request to: ${url}`);
+    console.log(`Spark API prompt: ${prompt}`);
+
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Authorization': this.apiKey,
@@ -41,11 +50,52 @@ export class SparkAPIClient {
     }
 
     const data = await response.json();
+    console.log('Spark API raw response:', JSON.stringify(data, null, 2).substring(0, 1000));
+
+    // Handle the actual Spark API response format
+    let responseText = '';
+
+    // Try various response fields
+    if (data.message && data.message.length > 0) {
+      responseText = data.message;
+    } else if (data.response) {
+      responseText = data.response;
+    } else if (data.answer) {
+      responseText = data.answer;
+    } else if (data.result) {
+      responseText = data.result;
+    } else if (data.insights && Array.isArray(data.insights) && data.insights.length > 0) {
+      // Format insights array into readable text
+      responseText = data.insights.map((insight: any) => {
+        if (typeof insight === 'string') return insight;
+        return insight.text || insight.message || insight.content || JSON.stringify(insight);
+      }).join('\n\n');
+    }
+
+    // If still empty, show helpful message
+    if (!responseText) {
+      responseText = 'The Spark API returned an empty response. This may happen if:\n' +
+        '- The question is too broad or unclear\n' +
+        '- The data requested is not available\n' +
+        '- Try rephrasing your question with more specific details';
+      console.warn('Empty Spark response. Full data:', JSON.stringify(data));
+    }
+
+    // Extract sources
+    const sources: string[] = [];
+    if (data.sources) {
+      ['topics', 'audiences', 'datasets', 'locations', 'waves'].forEach(key => {
+        if (data.sources[key] && Array.isArray(data.sources[key])) {
+          sources.push(...data.sources[key]);
+        }
+      });
+    }
 
     return {
-      response: data.response || data.answer || data.result || JSON.stringify(data),
-      sources: data.sources,
+      response: responseText,
+      sources: sources.length > 0 ? sources : undefined,
       confidence: data.confidence,
+      chatId: data.chat_id,
     };
   }
 
