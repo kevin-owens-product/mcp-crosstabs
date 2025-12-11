@@ -166,79 +166,55 @@ export class SparkAPIClient {
 
   /**
    * Parse the text response from chat_gwi tool
-   * Format: Insight ID: <uuid> Content: <text>
    */
   private parseChatGWIResponse(rawText: string): ChatGWIResult {
-    let chatId = '';
     const insights: Array<{ id: string; content: string }> = [];
     const sources: SparkSource = {};
-
-    // Normalize line endings
-    const text = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    let chatId = '';
 
     // Extract Chat ID
-    const chatIdMatch = text.match(/Chat ID:\s*([a-f0-9-]{36})/i);
-    if (chatIdMatch) {
-      chatId = chatIdMatch[1];
-    }
+    const chatIdMatch = rawText.match(/Chat ID:\s*([a-f0-9-]{36})/i);
+    if (chatIdMatch) chatId = chatIdMatch[1];
 
-    // Simple approach: find all "Insight ID: xxx Content: yyy" patterns
-    // Split by "Insight ID:" to get each insight block
-    const insightBlocks = text.split(/Insight ID:\s*/i).slice(1); // Skip first empty element
+    // Extract insights using a very simple approach:
+    // Find all occurrences of "Insight ID: <uuid> Content: <text>"
+    const insightRegex = /Insight ID:\s*([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\s*Content:\s*([^I]+?)(?=Insight ID:|Sources\n|Processing Instructions|$)/gi;
 
-    for (const block of insightBlocks) {
-      // Extract UUID (first 36 chars that look like a UUID)
-      const uuidMatch = block.match(/^([a-f0-9-]{36})/i);
-      if (!uuidMatch) continue;
-
-      const uuid = uuidMatch[1];
-
-      // Find "Content:" and extract everything after it until the next section
-      const contentMatch = block.match(/Content:\s*(.+?)(?=Insight ID:|Sources|Processing Instructions|$)/is);
-      if (contentMatch) {
-        const content = contentMatch[1].trim().replace(/\n+/g, ' ');
-        if (content.length > 0) {
-          insights.push({ id: uuid, content });
-        }
+    let match;
+    while ((match = insightRegex.exec(rawText)) !== null) {
+      const content = match[2].trim().replace(/\s+/g, ' ');
+      if (content) {
+        insights.push({ id: match[1], content });
       }
     }
 
-    console.log('Parsed insights count:', insights.length);
+    console.log('Parsed', insights.length, 'insights');
 
     // Extract sources
-    const topicsMatch = text.match(/Topics:\s*([^\n]+)/i);
+    const topicsMatch = rawText.match(/Topics:\s*([A-Za-z0-9\s,]+?)(?=Datasets:|Locations:|Time periods:|$)/i);
     if (topicsMatch) {
-      let topicsText = topicsMatch[1];
-      const nextSection = topicsText.search(/Datasets:|Locations:|Time periods:/i);
-      if (nextSection > 0) topicsText = topicsText.substring(0, nextSection);
-      sources.topics = topicsText.split(',').map(t => t.trim()).filter(t => t.length > 0);
+      sources.topics = topicsMatch[1].split(',').map(t => t.trim()).filter(Boolean);
     }
 
-    const datasetsMatch = text.match(/Datasets:\s*([^\n]+)/i);
+    const datasetsMatch = rawText.match(/Datasets:\s*(.+?)(?=Locations:|Time periods:|$)/i);
     if (datasetsMatch) {
-      let datasetsText = datasetsMatch[1];
-      const nextSection = datasetsText.search(/Locations:|Time periods:/i);
-      if (nextSection > 0) datasetsText = datasetsText.substring(0, nextSection);
-      sources.datasets = datasetsText.split(',').map(d => {
+      sources.datasets = datasetsMatch[1].split(',').map(d => {
         const m = d.trim().match(/(.+?)\s*\(([^)]+)\)/);
-        return m ? { name: m[1].trim(), code: m[2].trim() } : { name: d.trim(), code: d.trim() };
-      }).filter(d => d.name.length > 0);
+        return m ? { name: m[1].trim(), code: m[2].trim() } : { name: d.trim(), code: '' };
+      }).filter(d => d.name);
     }
 
-    const locationsMatch = text.match(/Locations:\s*([^\n]+)/i);
-    if (locationsMatch) {
-      let locText = locationsMatch[1];
-      const nextSection = locText.search(/Time periods:/i);
-      if (nextSection > 0) locText = locText.substring(0, nextSection);
-      sources.locations = locText.split(',').map(l => ({ code: l.trim(), name: l.trim() })).filter(l => l.name.length > 0);
+    const locMatch = rawText.match(/Locations:\s*(.+?)(?=Time periods:|$)/i);
+    if (locMatch) {
+      sources.locations = locMatch[1].split(',').map(l => ({ code: l.trim(), name: l.trim() })).filter(l => l.name);
     }
 
-    const wavesMatch = text.match(/Time periods:\s*([^\n]+)/i);
-    if (wavesMatch) {
-      sources.waves = wavesMatch[1].split(',').map(w => ({ code: w.trim(), name: w.trim() })).filter(w => w.name.length > 0);
+    const timeMatch = rawText.match(/Time periods:\s*(.+?)(?=\n\n|Processing|$)/i);
+    if (timeMatch) {
+      sources.waves = timeMatch[1].split(',').map(w => ({ code: w.trim(), name: w.trim() })).filter(w => w.name);
     }
 
-    return { response: text, insights, chatId, sources };
+    return { response: rawText, insights, chatId, sources };
   }
 
   /**
