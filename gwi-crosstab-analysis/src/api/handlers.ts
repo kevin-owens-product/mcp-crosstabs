@@ -268,6 +268,15 @@ interface Intent {
 function classifyIntent(message: string, crosstabId?: string | null): Intent {
   const lower = message.toLowerCase();
 
+  // Check for UUID pattern (crosstab ID) in the message
+  const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+  const uuidMatch = message.match(uuidPattern);
+
+  // If message contains a UUID, treat it as analyze request
+  if (uuidMatch) {
+    return { type: 'analyze_crosstab', crosstabId: uuidMatch[0] };
+  }
+
   // List crosstabs
   if (lower.includes('list') || (lower.includes('show me') && lower.includes('crosstab'))) {
     const searchMatch = lower.match(/about (.+)|for (.+)|with (.+)/);
@@ -392,7 +401,20 @@ async function handleAnalyzeIntent(crosstabId: string): Promise<string> {
     return 'Please select a crosstab from the sidebar or specify which one you want to analyze.';
   }
 
-  const crosstab = await orchestrator.client.getCrosstab(crosstabId);
+  console.log(`Attempting to fetch crosstab: ${crosstabId}`);
+
+  let crosstab;
+  try {
+    crosstab = await orchestrator.client.getCrosstab(crosstabId);
+  } catch (error) {
+    console.error(`Failed to fetch crosstab ${crosstabId}:`, error);
+    return `Failed to fetch crosstab with ID: ${crosstabId}\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}\n\nPlease check:\n- The crosstab ID is correct\n- Your API key has access to this crosstab`;
+  }
+
+  if (!crosstab || !crosstab.data || crosstab.data.length === 0) {
+    return `Crosstab found but contains no data. This may happen if:\n- The crosstab hasn't been run yet\n- The data export is still processing\n\nCrosstab ID: ${crosstabId}`;
+  }
+
   const baseAnalysis = analyzer.analyze(crosstab);
 
   let response = formatter.formatAnalysis(crosstab, baseAnalysis);
