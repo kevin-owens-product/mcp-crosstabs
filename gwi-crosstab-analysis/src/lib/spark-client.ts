@@ -28,7 +28,7 @@ interface MCPResponse {
 // Parsed response from chat_gwi tool
 export interface ChatGWIResult {
   response: string;
-  insightIds: string[];
+  insights: Array<{ id: string; content: string }>;
   chatId: string;
   sources: SparkSource;
 }
@@ -157,7 +157,7 @@ export class SparkAPIClient {
 
     return {
       message: parsed.response,
-      insights: parsed.insightIds.map(id => ({ id, text: '' })),
+      insights: parsed.insights.map(i => ({ id: i.id, text: i.content })),
       chatId: parsed.chatId,
       sources: parsed.sources,
       formattedText,
@@ -166,68 +166,135 @@ export class SparkAPIClient {
 
   /**
    * Parse the text response from chat_gwi tool
-   * The MCP endpoint returns verbose text that we can use directly
+   * Format: Insight ID: <uuid> Content: <text>
    */
   private parseChatGWIResponse(text: string): ChatGWIResult {
-    // The MCP endpoint returns more verbose, readable text
-    // Extract any structured data if present, otherwise use the text as-is
-
     let chatId = '';
-    let insightIds: string[] = [];
+    const insights: Array<{ id: string; content: string }> = [];
     const sources: SparkSource = {};
 
-    // Try to extract chat_id if present in the response
-    const chatIdMatch = text.match(/chat_id[:\s]+([a-zA-Z0-9-]+)/i);
+    // Extract Chat ID (format: "Chat ID: <uuid>")
+    const chatIdMatch = text.match(/Chat ID:\s*([a-f0-9-]{36})/i);
     if (chatIdMatch) {
       chatId = chatIdMatch[1];
     }
 
-    // Try to extract insight IDs if present (format: insight-xxx or similar)
-    const insightMatches = text.matchAll(/insight[_-]?id[:\s]+([a-zA-Z0-9-]+)/gi);
-    for (const match of insightMatches) {
-      insightIds.push(match[1]);
+    // Extract insights with ID and Content (format: "Insight ID: <uuid> Content: <text>")
+    const insightPattern = /Insight ID:\s*([a-f0-9-]{36})\s*Content:\s*([^\n]+)/gi;
+    let match;
+    while ((match = insightPattern.exec(text)) !== null) {
+      insights.push({
+        id: match[1],
+        content: match[2].trim()
+      });
     }
 
-    // Extract source information if structured
-    const topicsMatch = text.match(/topics?[:\s]+([^\n]+)/i);
+    // Extract source information
+    const topicsMatch = text.match(/Topics:\s*([^\n]+)/i);
     if (topicsMatch) {
-      sources.topics = topicsMatch[1].split(',').map(t => t.trim());
+      sources.topics = topicsMatch[1].split(',').map(t => t.trim()).filter(t => t.length > 0);
     }
 
-    const marketsMatch = text.match(/(?:markets?|locations?|countries?)[:\s]+([^\n]+)/i);
-    if (marketsMatch) {
-      sources.locations = marketsMatch[1].split(',').map(l => ({
+    const datasetsMatch = text.match(/Datasets:\s*([^\n]+)/i);
+    if (datasetsMatch) {
+      // Parse "GWI Core (ds-core)" format
+      const datasetParts = datasetsMatch[1].split(',').map(d => {
+        const match = d.trim().match(/(.+?)\s*\(([^)]+)\)/);
+        if (match) {
+          return { name: match[1].trim(), code: match[2].trim() };
+        }
+        return { name: d.trim(), code: d.trim() };
+      });
+      sources.datasets = datasetParts;
+    }
+
+    const locationsMatch = text.match(/Locations:\s*([^\n]+)/i);
+    if (locationsMatch) {
+      sources.locations = locationsMatch[1].split(',').map(l => ({
         code: l.trim(),
         name: l.trim()
       }));
     }
 
+    const wavesMatch = text.match(/Time periods:\s*([^\n]+)/i);
+    if (wavesMatch) {
+      sources.waves = wavesMatch[1].split(',').map(w => ({
+        code: w.trim(),
+        name: w.trim()
+      }));
+    }
+
     return {
       response: text,
-      insightIds,
+      insights,
       chatId,
       sources,
     };
   }
 
   /**
-   * Format API response into readable text
-   * Since MCP returns verbose text, we mostly pass it through
+   * Format API response into readable, user-friendly text
    */
   private formatResponse(data: ChatGWIResult): string {
-    // MCP endpoint returns verbose text, so we can use it directly
-    // Just clean up and format nicely
-    let text = data.response;
+    const parts: string[] = [];
 
-    // If the response is empty, provide helpful guidance
-    if (!text || text.trim().length === 0) {
+    // Add insights as the main content
+    if (data.insights && data.insights.length > 0) {
+      parts.push('## Key Insights\n');
+      data.insights.forEach((insight, index) => {
+        parts.push(`${index + 1}. ${insight.content}\n`);
+      });
+    }
+
+    // Add sources section
+    if (data.sources) {
+      const sourceLines: string[] = [];
+
+      if (data.sources.topics && data.sources.topics.length > 0) {
+        sourceLines.push(`**Topics:** ${data.sources.topics.join(', ')}`);
+      }
+
+      if (data.sources.datasets && data.sources.datasets.length > 0) {
+        const datasetNames = data.sources.datasets.map(d => d.name).join(', ');
+        sourceLines.push(`**Dataset:** ${datasetNames}`);
+      }
+
+      if (data.sources.waves && data.sources.waves.length > 0) {
+        const waveNames = data.sources.waves.map(w => w.name).join(', ');
+        sourceLines.push(`**Time Period:** ${waveNames}`);
+      }
+
+      if (data.sources.locations && data.sources.locations.length > 0) {
+        // Show first 5 locations + count if more
+        const locationNames = data.sources.locations.slice(0, 5).map(l => l.name);
+        const remaining = data.sources.locations.length - 5;
+        let locationText = locationNames.join(', ');
+        if (remaining > 0) {
+          locationText += ` and ${remaining} more markets`;
+        }
+        sourceLines.push(`**Markets:** ${locationText}`);
+      }
+
+      if (sourceLines.length > 0) {
+        parts.push('\n---\n');
+        parts.push('### Sources\n');
+        sourceLines.forEach(line => parts.push(line + '\n'));
+      }
+    }
+
+    // Handle empty response
+    if (parts.length === 0) {
+      // Fall back to raw response if no structured data was parsed
+      if (data.response && data.response.trim().length > 0) {
+        return data.response;
+      }
       return 'The MCP API returned an empty response. Try:\n' +
         '- Being more specific with your question\n' +
         '- Including a market (e.g., "in the UK")\n' +
         '- Specifying an audience (e.g., "among Gen Z")';
     }
 
-    return text;
+    return parts.join('');
   }
 
   /**
