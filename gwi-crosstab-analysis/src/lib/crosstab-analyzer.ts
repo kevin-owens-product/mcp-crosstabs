@@ -118,7 +118,7 @@ export class CrosstabAnalyzer {
         type: 'STRONG_AFFINITY',
         title: 'Strong Behavioral Affinities Detected',
         description: `Found ${strongAffinities.length} behaviors with very high over-indexing (>150). These represent core characteristics of the audience.`,
-        data: strongAffinities.slice(0, 10),
+        data: strongAffinities.slice(0, 20),
         significance: 'high'
       });
     }
@@ -134,7 +134,7 @@ export class CrosstabAnalyzer {
         type: 'MODERATE_AFFINITY',
         title: 'Moderate Over-Indexing Behaviors',
         description: `Found ${moderateAffinities.length} behaviors with moderate over-indexing (120-150). These represent secondary audience characteristics worth considering.`,
-        data: moderateAffinities.sort((a, b) => b.metrics.audience_index - a.metrics.audience_index).slice(0, 10),
+        data: moderateAffinities.sort((a, b) => b.metrics.audience_index - a.metrics.audience_index).slice(0, 20),
         significance: 'medium'
       });
     }
@@ -150,7 +150,7 @@ export class CrosstabAnalyzer {
         type: 'HIGH_REACH',
         title: 'High Reach Opportunities',
         description: `Found ${highReach.length} behaviors with high audience penetration (>50%) and positive indexing. These offer scale for broad campaigns.`,
-        data: highReach.sort((a, b) => b.metrics.audience_percentage - a.metrics.audience_percentage).slice(0, 10),
+        data: highReach.sort((a, b) => b.metrics.audience_percentage - a.metrics.audience_percentage).slice(0, 20),
         significance: 'high'
       });
     }
@@ -166,7 +166,7 @@ export class CrosstabAnalyzer {
         type: 'NICHE_TARGETING',
         title: 'Niche Targeting Opportunities',
         description: `Found ${nicheTargeting.length} behaviors with high over-indexing but lower reach (<30%). These are ideal for precision targeting strategies.`,
-        data: nicheTargeting.sort((a, b) => b.metrics.audience_index - a.metrics.audience_index).slice(0, 10),
+        data: nicheTargeting.sort((a, b) => b.metrics.audience_index - a.metrics.audience_index).slice(0, 20),
         significance: 'medium'
       });
     }
@@ -209,7 +209,7 @@ export class CrosstabAnalyzer {
         type: 'NEGATIVE_AFFINITY',
         title: 'Notable Negative Affinities',
         description: `Found ${unexpectedLow.length} behaviors with strong under-indexing (<50). These represent areas where the audience differs significantly from the general population.`,
-        data: unexpectedLow.slice(0, 10),
+        data: unexpectedLow.slice(0, 20),
         significance: 'medium'
       });
     }
@@ -225,7 +225,7 @@ export class CrosstabAnalyzer {
         type: 'MODERATE_NEGATIVE',
         title: 'Moderate Under-Indexing Behaviors',
         description: `Found ${moderateLow.length} behaviors with moderate under-indexing (50-80). Consider avoiding or de-prioritizing these in targeting.`,
-        data: moderateLow.sort((a, b) => a.metrics.audience_index - b.metrics.audience_index).slice(0, 10),
+        data: moderateLow.sort((a, b) => a.metrics.audience_index - b.metrics.audience_index).slice(0, 20),
         significance: 'low'
       });
     }
@@ -238,7 +238,7 @@ export class CrosstabAnalyzer {
     if (highConfidence.length > 0) {
       const topHighConfidence = highConfidence
         .sort((a, b) => b.metrics.audience_index - a.metrics.audience_index)
-        .slice(0, 10);
+        .slice(0, 20);
 
       insights.push({
         type: 'HIGH_CONFIDENCE',
@@ -260,7 +260,7 @@ export class CrosstabAnalyzer {
         type: 'BASELINE',
         title: 'Baseline Behaviors (No Differentiation)',
         description: `Found ${baselineBehaviors.length} behaviors where this audience matches the general population (index 95-105). These don't provide targeting differentiation.`,
-        data: baselineBehaviors.slice(0, 10),
+        data: baselineBehaviors.slice(0, 20),
         significance: 'low'
       });
     }
