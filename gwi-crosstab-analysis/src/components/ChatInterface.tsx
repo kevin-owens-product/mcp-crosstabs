@@ -78,6 +78,11 @@ const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>(
 
         const data = await response.json();
 
+        // Debug logging
+        console.log('API response data:', data);
+        console.log('API response crosstabs:', data.crosstabs);
+        console.log('API response crosstabs length:', data.crosstabs?.length || 0);
+
         const assistantMessage: ChatMessage = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',

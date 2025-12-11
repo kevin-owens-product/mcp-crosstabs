@@ -262,6 +262,10 @@ export async function handleChatMessage(req: Request, res: Response) {
       }
     }
 
+    // Debug logging
+    console.log('Chat response - crosstabsList:', JSON.stringify(crosstabsList, null, 2));
+    console.log('Chat response - crosstabsList length:', crosstabsList?.length || 0);
+
     res.json({
       response,
       analysisType,
