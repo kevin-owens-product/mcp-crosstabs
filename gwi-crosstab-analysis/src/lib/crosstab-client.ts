@@ -103,10 +103,11 @@ export class GWICrosstabClient {
     crosstabId: string,
     includeData: boolean = true
   ): Promise<Crosstab> {
-    const url = `${this.baseUrl}/v2/saved/crosstabs/${crosstabId}` +
-                (includeData ? '' : '?include_data=false');
+    // Explicitly set include_data parameter
+    const url = `${this.baseUrl}/v2/saved/crosstabs/${crosstabId}?include_data=${includeData}`;
 
     console.log(`Fetching crosstab: ${url}`);
+    console.log(`includeData parameter: ${includeData}`);
 
     const response = await fetch(url, {
       headers: {
@@ -150,12 +151,13 @@ export class GWICrosstabClient {
    * Parse JSON Lines format response
    * The API can return either:
    * 1. JSON Lines format (multiple JSON objects separated by newlines)
-   * 2. Single JSON object with data array embedded
+   * 2. Single JSON object with data array embedded (under various keys)
    */
   private async parseJSONLinesResponse(response: Response): Promise<Crosstab> {
     const text = await response.text();
+    console.log('=== PARSING CROSSTAB RESPONSE ===');
     console.log('Crosstab response length:', text.length);
-    console.log('Crosstab response (first 1000 chars):', text.substring(0, 1000));
+    console.log('Crosstab response (first 2000 chars):', text.substring(0, 2000));
 
     const lines = text.split('\n').filter(l => l.trim());
     console.log('Number of response lines:', lines.length);
@@ -168,31 +170,52 @@ export class GWICrosstabClient {
     const config = JSON.parse(lines[0]);
     console.log('Config keys:', Object.keys(config));
 
-    // Check if this is a single JSON response with embedded data
-    if (config.data && Array.isArray(config.data)) {
-      console.log(`Found embedded data array with ${config.data.length} items`);
-      return {
-        ...config,
-        id: config.uuid || config.id,
-      };
-    }
-
-    // Otherwise, parse JSON Lines format (data in subsequent lines)
-    const data: CrosstabDataRow[] = [];
-    for (let i = 1; i < lines.length; i++) {
-      try {
-        data.push(JSON.parse(lines[i]));
-      } catch (e) {
-        console.warn(`Failed to parse data row ${i}:`, e);
+    // Check for embedded data under various possible keys
+    const possibleDataKeys = ['data', 'results', 'values', 'rows_data', 'crosstab_data'];
+    for (const key of possibleDataKeys) {
+      if (config[key] && Array.isArray(config[key])) {
+        console.log(`Found embedded data array under "${key}" with ${config[key].length} items`);
+        return {
+          ...config,
+          id: config.uuid || config.id,
+          data: config[key], // Normalize to 'data' property
+        };
       }
     }
 
-    console.log(`Parsed ${data.length} data rows from JSON Lines format`);
+    // Check if lines 2+ contain data (JSON Lines format)
+    if (lines.length > 1) {
+      const data: CrosstabDataRow[] = [];
+      for (let i = 1; i < lines.length; i++) {
+        try {
+          const row = JSON.parse(lines[i]);
+          data.push(row);
+        } catch (e) {
+          console.warn(`Failed to parse data row ${i}:`, lines[i].substring(0, 100), e);
+        }
+      }
+
+      console.log(`Parsed ${data.length} data rows from JSON Lines format`);
+
+      if (data.length > 0) {
+        console.log('First data row sample:', JSON.stringify(data[0], null, 2).substring(0, 500));
+      }
+
+      return {
+        ...config,
+        id: config.uuid || config.id,
+        data
+      };
+    }
+
+    // No data found - return config only
+    console.log('*** WARNING: No data found in response ***');
+    console.log('Full config object:', JSON.stringify(config, null, 2).substring(0, 3000));
 
     return {
       ...config,
       id: config.uuid || config.id,
-      data
+      data: []
     };
   }
 }
