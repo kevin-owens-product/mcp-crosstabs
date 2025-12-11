@@ -106,11 +106,11 @@ export class CrosstabAnalyzer {
   private extractInsights(crosstab: Crosstab): Insight[] {
     const insights: Insight[] = [];
     const data = crosstab.data!;
+    const validData = data.filter(d => d.metrics.positive_sample >= 50);
 
     // Insight 1: Strong affinities (index > 150)
-    const strongAffinities = data.filter(d =>
-      d.metrics.audience_index > 150 &&
-      d.metrics.positive_sample >= 50
+    const strongAffinities = validData.filter(d =>
+      d.metrics.audience_index > 150
     );
 
     if (strongAffinities.length > 0) {
@@ -118,12 +118,60 @@ export class CrosstabAnalyzer {
         type: 'STRONG_AFFINITY',
         title: 'Strong Behavioral Affinities Detected',
         description: `Found ${strongAffinities.length} behaviors with very high over-indexing (>150). These represent core characteristics of the audience.`,
-        data: strongAffinities.slice(0, 5),
+        data: strongAffinities.slice(0, 20),
         significance: 'high'
       });
     }
 
-    // Insight 2: Market variations
+    // Insight 2: Moderate over-indexing (120-150)
+    const moderateAffinities = validData.filter(d =>
+      d.metrics.audience_index >= 120 &&
+      d.metrics.audience_index <= 150
+    );
+
+    if (moderateAffinities.length > 0) {
+      insights.push({
+        type: 'MODERATE_AFFINITY',
+        title: 'Moderate Over-Indexing Behaviors',
+        description: `Found ${moderateAffinities.length} behaviors with moderate over-indexing (120-150). These represent secondary audience characteristics worth considering.`,
+        data: moderateAffinities.sort((a, b) => b.metrics.audience_index - a.metrics.audience_index).slice(0, 20),
+        significance: 'medium'
+      });
+    }
+
+    // Insight 3: High reach opportunities (high audience percentage with good index)
+    const highReach = validData.filter(d =>
+      d.metrics.audience_percentage >= 50 &&
+      d.metrics.audience_index >= 100
+    );
+
+    if (highReach.length > 0) {
+      insights.push({
+        type: 'HIGH_REACH',
+        title: 'High Reach Opportunities',
+        description: `Found ${highReach.length} behaviors with high audience penetration (>50%) and positive indexing. These offer scale for broad campaigns.`,
+        data: highReach.sort((a, b) => b.metrics.audience_percentage - a.metrics.audience_percentage).slice(0, 20),
+        significance: 'high'
+      });
+    }
+
+    // Insight 4: Niche targeting opportunities (high index, lower reach)
+    const nicheTargeting = validData.filter(d =>
+      d.metrics.audience_index >= 140 &&
+      d.metrics.audience_percentage < 30
+    );
+
+    if (nicheTargeting.length > 0) {
+      insights.push({
+        type: 'NICHE_TARGETING',
+        title: 'Niche Targeting Opportunities',
+        description: `Found ${nicheTargeting.length} behaviors with high over-indexing but lower reach (<30%). These are ideal for precision targeting strategies.`,
+        data: nicheTargeting.sort((a, b) => b.metrics.audience_index - a.metrics.audience_index).slice(0, 20),
+        significance: 'medium'
+      });
+    }
+
+    // Insight 5: Market variations
     if (crosstab.country_codes.length > 1) {
       const marketVariations = this.analyzeMarketVariations(crosstab);
       if (marketVariations.hasSignificantVariation) {
@@ -137,7 +185,7 @@ export class CrosstabAnalyzer {
       }
     }
 
-    // Insight 3: Trends (if time series data)
+    // Insight 6: Trends (if time series data)
     if (crosstab.wave_codes.length > 1) {
       const trends = this.analyzeTrends(crosstab);
       if (trends.length > 0) {
@@ -151,10 +199,9 @@ export class CrosstabAnalyzer {
       }
     }
 
-    // Insight 4: Unexpected under-indexing
-    const unexpectedLow = data.filter(d =>
-      d.metrics.audience_index < 50 &&
-      d.metrics.positive_sample >= 50
+    // Insight 7: Unexpected under-indexing
+    const unexpectedLow = validData.filter(d =>
+      d.metrics.audience_index < 50
     );
 
     if (unexpectedLow.length > 0) {
@@ -162,8 +209,59 @@ export class CrosstabAnalyzer {
         type: 'NEGATIVE_AFFINITY',
         title: 'Notable Negative Affinities',
         description: `Found ${unexpectedLow.length} behaviors with strong under-indexing (<50). These represent areas where the audience differs significantly from the general population.`,
-        data: unexpectedLow.slice(0, 5),
+        data: unexpectedLow.slice(0, 20),
         significance: 'medium'
+      });
+    }
+
+    // Insight 8: Moderate under-indexing (50-80)
+    const moderateLow = validData.filter(d =>
+      d.metrics.audience_index >= 50 &&
+      d.metrics.audience_index <= 80
+    );
+
+    if (moderateLow.length > 0) {
+      insights.push({
+        type: 'MODERATE_NEGATIVE',
+        title: 'Moderate Under-Indexing Behaviors',
+        description: `Found ${moderateLow.length} behaviors with moderate under-indexing (50-80). Consider avoiding or de-prioritizing these in targeting.`,
+        data: moderateLow.sort((a, b) => a.metrics.audience_index - b.metrics.audience_index).slice(0, 20),
+        significance: 'low'
+      });
+    }
+
+    // Insight 9: High confidence data points (large sample sizes)
+    const highConfidence = validData.filter(d =>
+      d.metrics.positive_sample >= 200
+    );
+
+    if (highConfidence.length > 0) {
+      const topHighConfidence = highConfidence
+        .sort((a, b) => b.metrics.audience_index - a.metrics.audience_index)
+        .slice(0, 20);
+
+      insights.push({
+        type: 'HIGH_CONFIDENCE',
+        title: 'High Confidence Findings',
+        description: `Found ${highConfidence.length} data points with large sample sizes (n>=200). These findings are statistically robust.`,
+        data: topHighConfidence,
+        significance: 'high'
+      });
+    }
+
+    // Insight 10: Baseline behaviors (index near 100)
+    const baselineBehaviors = validData.filter(d =>
+      d.metrics.audience_index >= 95 &&
+      d.metrics.audience_index <= 105
+    );
+
+    if (baselineBehaviors.length > 0) {
+      insights.push({
+        type: 'BASELINE',
+        title: 'Baseline Behaviors (No Differentiation)',
+        description: `Found ${baselineBehaviors.length} behaviors where this audience matches the general population (index 95-105). These don't provide targeting differentiation.`,
+        data: baselineBehaviors.slice(0, 20),
+        significance: 'low'
       });
     }
 

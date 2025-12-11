@@ -25,10 +25,24 @@ interface MCPResponse {
   };
 }
 
+// Parsed insight with extracted metrics
+export interface ParsedInsight {
+  id: string;
+  content: string;
+  metrics: {
+    percentage?: number;
+    index?: number;
+    indexDirection?: 'over' | 'under' | 'neutral';
+    sample?: number;
+  };
+  category: 'positive_affinity' | 'negative_affinity' | 'demographic' | 'behavioral' | 'general';
+  significance: 'high' | 'medium' | 'low';
+}
+
 // Parsed response from chat_gwi tool
 export interface ChatGWIResult {
   response: string;
-  insights: Array<{ id: string; content: string }>;
+  insights: ParsedInsight[];
   chatId: string;
   sources: SparkSource;
 }
@@ -43,7 +57,7 @@ export interface SparkSource {
 
 export interface SparkResponse {
   message: string;
-  insights: Array<{ id: string; text: string }>;
+  insights: ParsedInsight[];
   chatId: string;
   sources: SparkSource;
   formattedText: string;
@@ -157,7 +171,7 @@ export class SparkAPIClient {
 
     return {
       message: parsed.response,
-      insights: parsed.insights.map(i => ({ id: i.id, text: i.content })),
+      insights: parsed.insights,
       chatId: parsed.chatId,
       sources: parsed.sources,
       formattedText,
@@ -168,7 +182,7 @@ export class SparkAPIClient {
    * Parse the text response from chat_gwi tool
    */
   private parseChatGWIResponse(rawText: string): ChatGWIResult {
-    const insights: Array<{ id: string; content: string }> = [];
+    const insights: ParsedInsight[] = [];
     const sources: SparkSource = {};
     let chatId = '';
 
@@ -184,9 +198,26 @@ export class SparkAPIClient {
     while ((match = insightRegex.exec(rawText)) !== null) {
       const content = match[2].trim().replace(/\s+/g, ' ');
       if (content) {
-        insights.push({ id: match[1], content });
+        const parsedInsight = this.parseInsightContent(match[1], content);
+        insights.push(parsedInsight);
       }
     }
+
+    // Sort insights: positive affinities first, then by significance, then by index
+    insights.sort((a, b) => {
+      // Priority order: positive_affinity > behavioral > demographic > negative_affinity > general
+      const categoryOrder = { positive_affinity: 0, behavioral: 1, demographic: 2, negative_affinity: 3, general: 4 };
+      const sigOrder = { high: 0, medium: 1, low: 2 };
+
+      if (categoryOrder[a.category] !== categoryOrder[b.category]) {
+        return categoryOrder[a.category] - categoryOrder[b.category];
+      }
+      if (sigOrder[a.significance] !== sigOrder[b.significance]) {
+        return sigOrder[a.significance] - sigOrder[b.significance];
+      }
+      // Higher index values first
+      return (b.metrics.index || 100) - (a.metrics.index || 100);
+    });
 
     console.log('Parsed', insights.length, 'insights');
 
@@ -218,17 +249,137 @@ export class SparkAPIClient {
   }
 
   /**
+   * Parse insight content to extract metrics and categorize
+   */
+  private parseInsightContent(id: string, content: string): ParsedInsight {
+    const metrics: ParsedInsight['metrics'] = {};
+    let category: ParsedInsight['category'] = 'general';
+    let significance: ParsedInsight['significance'] = 'medium';
+
+    // Extract percentage (e.g., "14% of the audience")
+    const percentMatch = content.match(/(\d+(?:\.\d+)?)\s*%\s*(of\s+the\s+audience)?/i);
+    if (percentMatch) {
+      metrics.percentage = parseFloat(percentMatch[1]);
+    }
+
+    // Extract index/likelihood (e.g., "40% more likely", "22% less likely")
+    const moreLikelyMatch = content.match(/(\d+(?:\.\d+)?)\s*%\s*more\s+likely/i);
+    const lessLikelyMatch = content.match(/(\d+(?:\.\d+)?)\s*%\s*less\s+likely/i);
+
+    if (moreLikelyMatch) {
+      const indexDelta = parseFloat(moreLikelyMatch[1]);
+      metrics.index = 100 + indexDelta;
+      metrics.indexDirection = 'over';
+    } else if (lessLikelyMatch) {
+      const indexDelta = parseFloat(lessLikelyMatch[1]);
+      metrics.index = 100 - indexDelta;
+      metrics.indexDirection = 'under';
+    }
+
+    // Categorize based on content keywords and index direction
+    const lowerContent = content.toLowerCase();
+
+    if (metrics.indexDirection === 'over') {
+      category = 'positive_affinity';
+    } else if (metrics.indexDirection === 'under') {
+      category = 'negative_affinity';
+    } else if (lowerContent.includes('age') || lowerContent.includes('gender') ||
+               lowerContent.includes('income') || lowerContent.includes('household') ||
+               lowerContent.includes('education') || lowerContent.includes('employed')) {
+      category = 'demographic';
+    } else if (lowerContent.includes('use') || lowerContent.includes('buy') ||
+               lowerContent.includes('watch') || lowerContent.includes('listen') ||
+               lowerContent.includes('prefer') || lowerContent.includes('engage')) {
+      category = 'behavioral';
+    }
+
+    // Determine significance based on index strength
+    if (metrics.index) {
+      if (metrics.index >= 140 || metrics.index <= 60) {
+        significance = 'high';
+      } else if (metrics.index >= 120 || metrics.index <= 80) {
+        significance = 'medium';
+      } else {
+        significance = 'low';
+      }
+    }
+
+    return {
+      id,
+      content,
+      metrics,
+      category,
+      significance,
+    };
+  }
+
+  /**
    * Format API response into readable, user-friendly text
    */
   private formatResponse(data: ChatGWIResult): string {
     const parts: string[] = [];
 
-    // Add insights as the main content
     if (data.insights && data.insights.length > 0) {
-      parts.push('## Key Insights\n');
-      data.insights.forEach((insight, index) => {
-        parts.push(`${index + 1}. ${insight.content}\n`);
-      });
+      // Group insights by category
+      const positive = data.insights.filter(i => i.category === 'positive_affinity');
+      const negative = data.insights.filter(i => i.category === 'negative_affinity');
+      const behavioral = data.insights.filter(i => i.category === 'behavioral');
+      const demographic = data.insights.filter(i => i.category === 'demographic');
+      const general = data.insights.filter(i => i.category === 'general');
+
+      // Format positive affinities (over-indexed behaviors)
+      if (positive.length > 0) {
+        parts.push('## Over-Indexed Behaviors (Opportunities)\n\n');
+        positive.forEach((insight, index) => {
+          const indexStr = insight.metrics.index ? ` [Index: ${Math.round(insight.metrics.index)}]` : '';
+          const sigIcon = insight.significance === 'high' ? '***' : insight.significance === 'medium' ? '**' : '*';
+          parts.push(`${index + 1}. ${sigIcon}${insight.content}${sigIcon}${indexStr}\n`);
+        });
+        parts.push('\n');
+      }
+
+      // Format negative affinities (under-indexed behaviors)
+      if (negative.length > 0) {
+        parts.push('## Under-Indexed Behaviors (Gaps)\n\n');
+        negative.forEach((insight, index) => {
+          const indexStr = insight.metrics.index ? ` [Index: ${Math.round(insight.metrics.index)}]` : '';
+          parts.push(`${index + 1}. ${insight.content}${indexStr}\n`);
+        });
+        parts.push('\n');
+      }
+
+      // Format behavioral insights
+      if (behavioral.length > 0) {
+        parts.push('## Behavioral Insights\n\n');
+        behavioral.forEach((insight, index) => {
+          parts.push(`${index + 1}. ${insight.content}\n`);
+        });
+        parts.push('\n');
+      }
+
+      // Format demographic insights
+      if (demographic.length > 0) {
+        parts.push('## Demographic Insights\n\n');
+        demographic.forEach((insight, index) => {
+          parts.push(`${index + 1}. ${insight.content}\n`);
+        });
+        parts.push('\n');
+      }
+
+      // Format general insights
+      if (general.length > 0) {
+        parts.push('## Additional Insights\n\n');
+        general.forEach((insight, index) => {
+          parts.push(`${index + 1}. ${insight.content}\n`);
+        });
+        parts.push('\n');
+      }
+
+      // Summary stats
+      const highSigCount = data.insights.filter(i => i.significance === 'high').length;
+      if (highSigCount > 0) {
+        parts.push(`---\n**Summary:** ${data.insights.length} insights found, ${highSigCount} high-significance findings.\n\n`);
+      }
     }
 
     // Add sources section
@@ -261,7 +412,6 @@ export class SparkAPIClient {
       }
 
       if (sourceLines.length > 0) {
-        parts.push('\n---\n');
         parts.push('### Sources\n');
         sourceLines.forEach(line => parts.push(line + '\n'));
       }

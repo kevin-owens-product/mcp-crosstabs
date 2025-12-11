@@ -1,4 +1,5 @@
 import type { Crosstab, Analysis, IndexedItem, Insight, Recommendation } from './types';
+import { findMatchingRow } from './types';
 
 export class ResponseFormatter {
   formatAnalysis(crosstab: Crosstab, analysis: Analysis): string {
@@ -90,7 +91,7 @@ export class ResponseFormatter {
 
       if (topForMarket.length > 0) {
         topForMarket.forEach((row, i) => {
-          const rowDef = crosstab.rows.find(r => row.datapoint.includes(r.id));
+          const rowDef = findMatchingRow(row.datapoint, crosstab.rows);
           const label = rowDef?.name || row.datapoint;
 
           output += `${i + 1}. **${label}**: Index ${Math.round(row.metrics.audience_index)}\n`;
