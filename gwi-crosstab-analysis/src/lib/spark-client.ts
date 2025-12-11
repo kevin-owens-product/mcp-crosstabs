@@ -190,9 +190,9 @@ export class SparkAPIClient {
     const chatIdMatch = rawText.match(/Chat ID:\s*([a-f0-9-]{36})/i);
     if (chatIdMatch) chatId = chatIdMatch[1];
 
-    // Extract insights using a very simple approach:
-    // Find all occurrences of "Insight ID: <uuid> Content: <text>"
-    const insightRegex = /Insight ID:\s*([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\s*Content:\s*([^I]+?)(?=Insight ID:|Sources\n|Processing Instructions|$)/gi;
+    // Extract insights - match from "Insight ID: <uuid> Content:" to the next insight or end markers
+    // Using a more robust pattern that doesn't break on capital I in content
+    const insightRegex = /Insight ID:\s*([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\s*Content:\s*([\s\S]+?)(?=Insight ID:|Sources\s*\n|Processing Instructions|$)/gi;
 
     let match;
     while ((match = insightRegex.exec(rawText)) !== null) {
