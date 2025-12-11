@@ -9,6 +9,11 @@ import { SparkAPIClient, shouldUseSparkAPI, formatSparkResponse } from '../lib/s
 const API_KEY = process.env.GWI_API_KEY;
 const SPARK_API_KEY = process.env.GWI_MCP_KEY;
 
+console.log('=== API KEY CONFIGURATION ===');
+console.log('GWI_API_KEY:', API_KEY ? `set (length=${API_KEY.length}, starts=${API_KEY.substring(0, 10)}...)` : 'NOT SET');
+console.log('GWI_MCP_KEY:', SPARK_API_KEY ? `set (length=${SPARK_API_KEY.length}, starts=${SPARK_API_KEY.substring(0, 10)}...)` : 'NOT SET');
+console.log('Keys are same:', API_KEY === SPARK_API_KEY ? 'YES' : 'NO');
+
 if (!API_KEY) {
   console.warn('GWI_API_KEY not found - crosstab features will be unavailable');
 }

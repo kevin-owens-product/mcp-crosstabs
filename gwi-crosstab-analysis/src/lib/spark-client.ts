@@ -80,19 +80,19 @@ export interface InsightDetail {
 }
 
 export class SparkAPIClient {
-  private baseUrl: string;
   private apiKey: string;
   private currentChatId: string | null = null;
   private requestCounter: number = 0;
 
-  constructor(apiKey: string, useAlphaEnv: boolean = false) {
-    // Store API key without Bearer prefix - MCP endpoint expects raw key
-    this.apiKey = apiKey.replace(/^Bearer\s+/i, '');
-    // Default to production URL as per MCP documentation
-    this.baseUrl = useAlphaEnv
-      ? 'https://api-alpha.globalwebindex.com'
-      : 'https://api.globalwebindex.com';
-    console.log(`SparkAPIClient initialized with baseUrl: ${this.baseUrl}`);
+  // MCP endpoint is only available on production per documentation
+  private readonly mcpUrl = 'https://api.globalwebindex.com/v1/spark-api/mcp';
+
+  constructor(apiKey: string) {
+    // Store API key - will be formatted in sendMCPRequest
+    this.apiKey = apiKey.replace(/^Bearer\s+/i, '').trim();
+    console.log(`SparkAPIClient initialized`);
+    console.log(`MCP endpoint: ${this.mcpUrl}`);
+    console.log(`API key length: ${this.apiKey.length}, starts with: ${this.apiKey.substring(0, 8)}...`);
   }
 
   /**
@@ -108,16 +108,17 @@ export class SparkAPIClient {
    * Per documentation: https://api.globalwebindex.com/docs/spark-mcp/reference/mcp-tools/execute-gwi-mcp-tool-calls
    */
   private async sendMCPRequest(request: MCPRequest): Promise<MCPResponse> {
-    const url = `${this.baseUrl}/v1/spark-api/mcp`;
     console.log(`=== MCP API REQUEST ===`);
-    console.log(`MCP API URL: ${url}`);
+    console.log(`MCP API URL: ${this.mcpUrl}`);
     console.log(`MCP API tool: ${request.params.name}`);
     console.log(`MCP API request body:`, JSON.stringify(request, null, 2));
 
-    const response = await fetch(url, {
+    // Per docs, just use the API key directly (no Bearer prefix)
+    console.log(`Authorization: raw key (no Bearer), length=${this.apiKey.length}`);
+
+    const response = await fetch(this.mcpUrl, {
       method: 'POST',
       headers: {
-        // Per MCP docs: Authorization header with API key (no Bearer prefix)
         'Authorization': this.apiKey,
         'Content-Type': 'application/json',
       },
@@ -129,6 +130,33 @@ export class SparkAPIClient {
     if (!response.ok) {
       const errorText = await response.text();
       console.error(`MCP API error response:`, errorText);
+
+      // If 401, try with Bearer prefix as fallback
+      if (response.status === 401) {
+        console.log('Retrying with Bearer prefix...');
+        const retryResponse = await fetch(this.mcpUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(request),
+        });
+
+        console.log(`MCP API retry response status: ${retryResponse.status}`);
+
+        if (!retryResponse.ok) {
+          const retryErrorText = await retryResponse.text();
+          console.error(`MCP API retry error response:`, retryErrorText);
+          throw new Error(`MCP API error (${retryResponse.status}): ${retryErrorText}. Both raw key and Bearer prefix failed.`);
+        }
+
+        const retryData: MCPResponse = await retryResponse.json();
+        console.log('=== MCP API RESPONSE (with Bearer) ===');
+        console.log('MCP API raw response:', JSON.stringify(retryData, null, 2).substring(0, 3000));
+        return retryData;
+      }
+
       throw new Error(`MCP API error (${response.status}): ${errorText}`);
     }
 
