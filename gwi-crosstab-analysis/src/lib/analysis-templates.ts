@@ -1,4 +1,5 @@
 import type { Crosstab, Analysis, TemplateAnalysis, AnalysisTemplate, KeyMetric } from './types';
+import { matchesId, getRowName } from './types';
 
 // ============================================================================
 // TEMPLATE 1: AUDIENCE PROFILING
@@ -76,8 +77,7 @@ const AudienceProfilingTemplate: AnalysisTemplate = {
 
       insights: [
         `**Core Identity**: The top defining traits are: ${definingTraits.slice(0, 3).map(d => {
-          const row = crosstab.rows.find(r => d.datapoint.includes(r.id));
-          return row?.name || d.datapoint;
+          return getRowName(d.datapoint, crosstab.rows);
         }).join(', ')} (indexes: ${definingTraits.slice(0, 3).map(d => Math.round(d.metrics.audience_index)).join(', ')})`,
 
         categories.media.length > 0
@@ -340,15 +340,13 @@ const TrendAnalysisTemplate: AnalysisTemplate = {
       insights: [
         growing.length > 0
           ? `**Emerging Opportunities**: Top growing behaviors are ${growing.slice(0, 3).map(t => {
-              const row = crosstab.rows.find(r => t.datapoint.includes(r.id));
-              return `${row?.name || t.datapoint} (+${Math.round(t.change)} pts)`;
+              return `${getRowName(t.datapoint, crosstab.rows)} (+${Math.round(t.change)} pts)`;
             }).join(', ')}`
           : `**No Growth**: No behaviors showing significant growth - audience may be maturing`,
 
         declining.length > 0
           ? `**Declining Affinities**: Watch for erosion in ${declining.slice(0, 3).map(t => {
-              const row = crosstab.rows.find(r => t.datapoint.includes(r.id));
-              return `${row?.name || t.datapoint} (${Math.round(t.change)} pts)`;
+              return `${getRowName(t.datapoint, crosstab.rows)} (${Math.round(t.change)} pts)`;
             }).join(', ')}`
           : `**Stable Profile**: No significant behavioral declines observed`,
 
@@ -411,7 +409,7 @@ const CompetitiveComparisonTemplate: AnalysisTemplate = {
 
     competitors.forEach(comp => {
       const compData = data.filter(d =>
-        d.audience === comp.id || d.audience?.includes(comp.id)
+        matchesId(d.audience, comp.id)
       );
 
       const validData = compData.filter(d => d.metrics.positive_sample >= 50);
@@ -623,8 +621,7 @@ const MediaConsumptionTemplate: AnalysisTemplate = {
       insights: [
         dominant.length > 0
           ? `**Must-Have Channels**: ${dominant.slice(0, 4).map(d => {
-              const row = crosstab.rows.find(r => d.datapoint.includes(r.id));
-              return `${row?.name || d.datapoint} (${Math.round(d.metrics.audience_index)})`;
+              return `${getRowName(d.datapoint, crosstab.rows)} (${Math.round(d.metrics.audience_index)})`;
             }).join(', ')}`
           : `**Fragmented Consumption**: No single dominant platform - omnichannel approach required`,
 

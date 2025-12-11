@@ -8,6 +8,7 @@ import type {
   Insight,
   Recommendation
 } from './types';
+import { findMatchingRow, findMatchingColumn } from './types';
 
 export class CrosstabAnalyzer {
   /**
@@ -229,9 +230,9 @@ export class CrosstabAnalyzer {
   // Helper methods
 
   private toIndexedItem(row: CrosstabDataRow, crosstab: Crosstab): IndexedItem {
-    // Find the friendly name from crosstab configuration
-    const rowDef = crosstab.rows.find(r => row.datapoint.includes(r.id));
-    const colDef = crosstab.columns.find(c => row.audience?.includes(c.id));
+    // Find the friendly name from crosstab configuration using proper ID matching
+    const rowDef = findMatchingRow(row.datapoint, crosstab.rows);
+    const colDef = findMatchingColumn(row.audience, crosstab.columns);
 
     const label = [
       rowDef?.name || row.datapoint,
