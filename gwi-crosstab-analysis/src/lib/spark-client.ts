@@ -115,14 +115,13 @@ export class SparkAPIClient {
     console.log(`MCP API tool: ${request.params.name}`);
     console.log(`MCP API request body:`, JSON.stringify(request, null, 2));
 
-    // Try with Bearer prefix - common OAuth format
-    const authHeader = this.apiKey.startsWith('Bearer ') ? this.apiKey : `Bearer ${this.apiKey}`;
-    console.log(`Authorization header format: Bearer ***`);
+    // Per docs, just use the API key directly (no Bearer prefix)
+    console.log(`Authorization: raw key (no Bearer), length=${this.apiKey.length}`);
 
     const response = await fetch(url, {
       method: 'POST',
       headers: {
-        'Authorization': authHeader,
+        'Authorization': this.apiKey,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(request),
@@ -133,6 +132,33 @@ export class SparkAPIClient {
     if (!response.ok) {
       const errorText = await response.text();
       console.error(`MCP API error response:`, errorText);
+
+      // If 401, try with Bearer prefix as fallback
+      if (response.status === 401) {
+        console.log('Retrying with Bearer prefix...');
+        const retryResponse = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(request),
+        });
+
+        console.log(`MCP API retry response status: ${retryResponse.status}`);
+
+        if (!retryResponse.ok) {
+          const retryErrorText = await retryResponse.text();
+          console.error(`MCP API retry error response:`, retryErrorText);
+          throw new Error(`MCP API error (${retryResponse.status}): ${retryErrorText}. Both raw key and Bearer prefix failed.`);
+        }
+
+        const retryData: MCPResponse = await retryResponse.json();
+        console.log('=== MCP API RESPONSE (with Bearer) ===');
+        console.log('MCP API raw response:', JSON.stringify(retryData, null, 2).substring(0, 3000));
+        return retryData;
+      }
+
       throw new Error(`MCP API error (${response.status}): ${errorText}`);
     }
 
