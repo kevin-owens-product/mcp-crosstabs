@@ -81,12 +81,20 @@ export class SparkAPIClient {
       console.warn('Empty Spark response. Full data:', JSON.stringify(data));
     }
 
-    // Extract sources
+    // Extract sources - handle both string and object formats
     const sources: string[] = [];
     if (data.sources) {
       ['topics', 'audiences', 'datasets', 'locations', 'waves'].forEach(key => {
         if (data.sources[key] && Array.isArray(data.sources[key])) {
-          sources.push(...data.sources[key]);
+          data.sources[key].forEach((item: any) => {
+            if (typeof item === 'string') {
+              sources.push(item);
+            } else if (item && typeof item === 'object') {
+              // Extract name or other identifying property
+              const name = item.name || item.title || item.label || item.code || item.id;
+              if (name) sources.push(name);
+            }
+          });
         }
       });
     }
