@@ -188,28 +188,48 @@ export async function handleChatMessage(req: Request, res: Response) {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    // Check if this should go to Spark API
-    const useSparkAPI = shouldUseSparkAPI(message) && sparkClient;
-
     let response = '';
     let analysisType = 'unknown';
 
-    if (useSparkAPI && !crosstabId) {
-      // Use Spark API for general GWI data questions
-      response = await handleSparkQuery(message);
-      analysisType = 'spark_query';
-    } else {
-      // Use Platform API for crosstab-specific queries
-      const intent = classifyIntent(message, crosstabId);
-      analysisType = intent.type;
+    // Classify intent
+    const intent = classifyIntent(message, crosstabId);
+    analysisType = intent.type;
 
+    // If a crosstab is selected, handle crosstab-aware queries
+    if (crosstabId) {
       switch (intent.type) {
         case 'list_crosstabs':
           response = await handleListIntent(intent.searchTerm);
           break;
 
         case 'analyze_crosstab':
-          response = await handleAnalyzeIntent(intent.crosstabId || crosstabId);
+          response = await handleAnalyzeIntent(crosstabId);
+          break;
+
+        case 'help':
+          response = getHelpResponse();
+          break;
+
+        default:
+          // For any other query with a selected crosstab, use Spark with crosstab context
+          if (sparkClient) {
+            response = await handleCrosstabAwareSparkQuery(message, crosstabId);
+            analysisType = 'crosstab_spark_query';
+          } else {
+            // Fallback to local analysis
+            response = await handleAnalyzeIntent(crosstabId);
+            analysisType = 'analyze_crosstab';
+          }
+      }
+    } else {
+      // No crosstab selected - route based on intent
+      switch (intent.type) {
+        case 'list_crosstabs':
+          response = await handleListIntent(intent.searchTerm);
+          break;
+
+        case 'analyze_crosstab':
+          response = await handleAnalyzeIntent(intent.crosstabId!);
           break;
 
         case 'search_and_analyze':
@@ -220,19 +240,14 @@ export async function handleChatMessage(req: Request, res: Response) {
           response = await handleCompareIntent();
           break;
 
-        case 'spark_query':
-          response = await handleSparkQuery(message, crosstabId);
-          analysisType = 'spark_query';
-          break;
-
         case 'help':
           response = getHelpResponse();
           break;
 
         default:
-          // Try Spark API for unknown intents if available
+          // Use Spark API for general queries
           if (sparkClient) {
-            response = await handleSparkQuery(message, crosstabId);
+            response = await handleSparkQuery(message);
             analysisType = 'spark_query';
           } else {
             response = 'I understand you want to analyze data. Could you be more specific? For example:\n- "List my crosstabs"\n- "Analyze [crosstab name]"\n- "What percentage of Gen Z use TikTok daily?"';
@@ -243,6 +258,7 @@ export async function handleChatMessage(req: Request, res: Response) {
     res.json({
       response,
       analysisType,
+      crosstabId: crosstabId || null,
       timestamp: new Date().toISOString(),
     });
   } catch (error: unknown) {
@@ -322,38 +338,105 @@ function classifyIntent(message: string, crosstabId?: string | null): Intent {
   return { type: 'unknown' };
 }
 
-// Spark API query handler
-async function handleSparkQuery(message: string, crosstabId?: string | null): Promise<string> {
+// Spark API query handler (for general queries without crosstab)
+async function handleSparkQuery(message: string): Promise<string> {
   if (!sparkClient) {
     return 'The Spark AI feature is not configured. Please add the GWI_MCP_KEY environment variable to enable AI-powered queries about GWI data.';
   }
 
   try {
-    // If we have a crosstab context, enrich the query
-    let context;
-    if (crosstabId && orchestrator) {
-      try {
-        const crosstab = await orchestrator.client.getCrosstab(crosstabId, false);
-        context = {
-          name: crosstab.name,
-          markets: crosstab.country_codes,
-          waves: crosstab.wave_codes,
-          audience: crosstab.bases?.[0]?.name,
-        };
-      } catch {
-        // Ignore crosstab fetch errors, proceed without context
-      }
-    }
-
-    const sparkResponse = context
-      ? await sparkClient.queryWithContext(message, context)
-      : await sparkClient.query(message);
-
+    const sparkResponse = await sparkClient.query(message);
     return formatSparkResponse(sparkResponse);
   } catch (error) {
     console.error('Spark API error:', error);
     return `I encountered an error querying GWI data: ${error instanceof Error ? error.message : 'Unknown error'}. Please try rephrasing your question.`;
   }
+}
+
+// Crosstab-aware Spark query handler
+async function handleCrosstabAwareSparkQuery(message: string, crosstabId: string): Promise<string> {
+  if (!sparkClient) {
+    return 'The Spark AI feature is not configured. Please add the GWI_MCP_KEY environment variable.';
+  }
+
+  if (!orchestrator) {
+    return 'The crosstab feature is not configured. Please add the GWI_API_KEY environment variable.';
+  }
+
+  try {
+    // Fetch crosstab metadata (without full data for speed)
+    let crosstab;
+    try {
+      crosstab = await orchestrator.client.getCrosstab(crosstabId, false);
+    } catch (error) {
+      console.error('Failed to fetch crosstab for context:', error);
+      // Fall back to basic Spark query
+      return handleSparkQuery(message);
+    }
+
+    // Build rich context from crosstab
+    const context = {
+      name: crosstab.name,
+      markets: crosstab.country_codes || [],
+      waves: crosstab.wave_codes || [],
+      audience: crosstab.bases?.[0]?.name,
+    };
+
+    // Build a contextual prompt that references the crosstab
+    const contextualPrompt = buildCrosstabContextPrompt(message, crosstab);
+
+    console.log('Crosstab-aware Spark query:', contextualPrompt);
+
+    // Query Spark with context
+    const sparkResponse = await sparkClient.queryWithContext(contextualPrompt, context);
+
+    // Format response with crosstab reference
+    let response = formatSparkResponse(sparkResponse);
+
+    // Add crosstab context header
+    const contextHeader = `**Analyzing: ${crosstab.name}**\n` +
+      (context.markets.length > 0 ? `Markets: ${context.markets.join(', ')}\n` : '') +
+      (context.waves.length > 0 ? `Time Period: ${context.waves.join(', ')}\n` : '') +
+      (context.audience ? `Audience: ${context.audience}\n` : '') +
+      '\n---\n\n';
+
+    return contextHeader + response;
+  } catch (error) {
+    console.error('Crosstab-aware Spark query error:', error);
+    return `I encountered an error analyzing the crosstab: ${error instanceof Error ? error.message : 'Unknown error'}. Please try rephrasing your question.`;
+  }
+}
+
+// Build a contextual prompt that includes crosstab information
+function buildCrosstabContextPrompt(userMessage: string, crosstab: any): string {
+  const parts: string[] = [];
+
+  // Add crosstab context
+  parts.push(`I'm analyzing a crosstab called "${crosstab.name}".`);
+
+  if (crosstab.country_codes && crosstab.country_codes.length > 0) {
+    parts.push(`This data covers: ${crosstab.country_codes.join(', ')}.`);
+  }
+
+  if (crosstab.wave_codes && crosstab.wave_codes.length > 0) {
+    parts.push(`Time period: ${crosstab.wave_codes.join(', ')}.`);
+  }
+
+  if (crosstab.bases && crosstab.bases.length > 0) {
+    const audienceNames = crosstab.bases.map((b: any) => b.name).join(', ');
+    parts.push(`Target audience: ${audienceNames}.`);
+  }
+
+  if (crosstab.rows && crosstab.rows.length > 0) {
+    const rowNames = crosstab.rows.slice(0, 5).map((r: any) => r.name).join(', ');
+    parts.push(`Analyzing: ${rowNames}${crosstab.rows.length > 5 ? '...' : ''}.`);
+  }
+
+  // Add user's question
+  parts.push('');
+  parts.push(`Question: ${userMessage}`);
+
+  return parts.join(' ');
 }
 
 // Intent handlers
