@@ -84,8 +84,8 @@ export class SparkAPIClient {
   private currentChatId: string | null = null;
   private requestCounter: number = 0;
 
-  // MCP endpoint is only available on production per documentation
-  private readonly mcpUrl = 'https://api.globalwebindex.com/v1/spark-api/mcp';
+  // Try alpha server for MCP endpoint
+  private readonly mcpUrl = 'https://api-alpha.globalwebindex.com/v1/spark-api/mcp';
 
   constructor(apiKey: string) {
     // Store API key - will be formatted in sendMCPRequest
