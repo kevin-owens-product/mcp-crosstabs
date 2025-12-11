@@ -80,19 +80,18 @@ export interface InsightDetail {
 }
 
 export class SparkAPIClient {
-  private baseUrl: string;
   private apiKey: string;
   private currentChatId: string | null = null;
   private requestCounter: number = 0;
 
-  constructor(apiKey: string, useAlphaEnv: boolean = true) {
+  // MCP endpoint is only available on production per documentation
+  private readonly mcpUrl = 'https://api.globalwebindex.com/v1/spark-api/mcp';
+
+  constructor(apiKey: string) {
     // Store API key - will be formatted in sendMCPRequest
     this.apiKey = apiKey.replace(/^Bearer\s+/i, '').trim();
-    // Use alpha environment by default (matches GWI_API_KEY behavior)
-    this.baseUrl = useAlphaEnv
-      ? 'https://api-alpha.globalwebindex.com'
-      : 'https://api.globalwebindex.com';
-    console.log(`SparkAPIClient initialized with baseUrl: ${this.baseUrl}`);
+    console.log(`SparkAPIClient initialized`);
+    console.log(`MCP endpoint: ${this.mcpUrl}`);
     console.log(`API key length: ${this.apiKey.length}, starts with: ${this.apiKey.substring(0, 8)}...`);
   }
 
@@ -109,16 +108,15 @@ export class SparkAPIClient {
    * Per documentation: https://api.globalwebindex.com/docs/spark-mcp/reference/mcp-tools/execute-gwi-mcp-tool-calls
    */
   private async sendMCPRequest(request: MCPRequest): Promise<MCPResponse> {
-    const url = `${this.baseUrl}/v1/spark-api/mcp`;
     console.log(`=== MCP API REQUEST ===`);
-    console.log(`MCP API URL: ${url}`);
+    console.log(`MCP API URL: ${this.mcpUrl}`);
     console.log(`MCP API tool: ${request.params.name}`);
     console.log(`MCP API request body:`, JSON.stringify(request, null, 2));
 
     // Per docs, just use the API key directly (no Bearer prefix)
     console.log(`Authorization: raw key (no Bearer), length=${this.apiKey.length}`);
 
-    const response = await fetch(url, {
+    const response = await fetch(this.mcpUrl, {
       method: 'POST',
       headers: {
         'Authorization': this.apiKey,
@@ -136,7 +134,7 @@ export class SparkAPIClient {
       // If 401, try with Bearer prefix as fallback
       if (response.status === 401) {
         console.log('Retrying with Bearer prefix...');
-        const retryResponse = await fetch(url, {
+        const retryResponse = await fetch(this.mcpUrl, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${this.apiKey}`,
