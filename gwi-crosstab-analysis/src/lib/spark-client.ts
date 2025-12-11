@@ -16,9 +16,9 @@ export class SparkAPIClient {
   private baseUrl: string;
   private apiKey: string;
 
-  constructor(apiKey: string, useAlphaEnv: boolean = false) {
+  constructor(apiKey: string, useAlphaEnv: boolean = true) {
     this.apiKey = apiKey;
-    // Spark API may work better on production endpoint
+    // Use alpha environment by default
     this.baseUrl = useAlphaEnv
       ? 'https://api-alpha.globalwebindex.com'
       : 'https://api.globalwebindex.com';
