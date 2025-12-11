@@ -190,6 +190,7 @@ export async function handleChatMessage(req: Request, res: Response) {
 
     let response = '';
     let analysisType = 'unknown';
+    let crosstabsList: Array<{ id: string; name: string }> | null = null;
 
     // Classify intent
     const intent = classifyIntent(message, crosstabId);
@@ -198,9 +199,12 @@ export async function handleChatMessage(req: Request, res: Response) {
     // If a crosstab is selected, handle crosstab-aware queries
     if (crosstabId) {
       switch (intent.type) {
-        case 'list_crosstabs':
-          response = await handleListIntent(intent.searchTerm);
+        case 'list_crosstabs': {
+          const result = await handleListIntentWithData(intent.searchTerm);
+          response = result.response;
+          crosstabsList = result.crosstabs;
           break;
+        }
 
         case 'analyze_crosstab':
           response = await handleAnalyzeIntent(crosstabId);
@@ -224,9 +228,12 @@ export async function handleChatMessage(req: Request, res: Response) {
     } else {
       // No crosstab selected - route based on intent
       switch (intent.type) {
-        case 'list_crosstabs':
-          response = await handleListIntent(intent.searchTerm);
+        case 'list_crosstabs': {
+          const result = await handleListIntentWithData(intent.searchTerm);
+          response = result.response;
+          crosstabsList = result.crosstabs;
           break;
+        }
 
         case 'analyze_crosstab':
           response = await handleAnalyzeIntent(intent.crosstabId!);
@@ -259,6 +266,7 @@ export async function handleChatMessage(req: Request, res: Response) {
       response,
       analysisType,
       crosstabId: crosstabId || null,
+      crosstabs: crosstabsList,
       timestamp: new Date().toISOString(),
     });
   } catch (error: unknown) {
@@ -440,9 +448,17 @@ function buildCrosstabContextPrompt(userMessage: string, crosstab: any): string 
 }
 
 // Intent handlers
-async function handleListIntent(searchTerm?: string): Promise<string> {
+
+// Returns both response text and crosstabs data for UI rendering
+async function handleListIntentWithData(searchTerm?: string): Promise<{
+  response: string;
+  crosstabs: Array<{ id: string; name: string }> | null;
+}> {
   if (!orchestrator) {
-    return 'The crosstab feature is not configured. Please add the GWI_API_KEY environment variable.';
+    return {
+      response: 'The crosstab feature is not configured. Please add the GWI_API_KEY environment variable.',
+      crosstabs: null
+    };
   }
 
   const crosstabs = searchTerm
@@ -454,26 +470,32 @@ async function handleListIntent(searchTerm?: string): Promise<string> {
       ? `No crosstabs found matching "${searchTerm}".`
       : 'No saved crosstabs found in your account.';
 
-    return `${baseMessage}\n\nThis could mean:\n- The API key doesn't have access to any saved crosstabs\n- No crosstabs have been created in this account\n- The API key may need different permissions\n\nYou can try using the **GWI Data Queries** prompts to ask questions about GWI data directly.`;
+    return {
+      response: `${baseMessage}\n\nThis could mean:\n- The API key doesn't have access to any saved crosstabs\n- No crosstabs have been created in this account\n- The API key may need different permissions\n\nYou can try using the **GWI Data Queries** prompts to ask questions about GWI data directly.`,
+      crosstabs: null
+    };
   }
 
   let response = searchTerm
     ? `Found ${crosstabs.length} crosstab${crosstabs.length > 1 ? 's' : ''} matching "${searchTerm}":\n\n`
-    : `You have ${crosstabs.length} crosstab${crosstabs.length > 1 ? 's' : ''}:\n\n`;
+    : `You have ${crosstabs.length} crosstab${crosstabs.length > 1 ? 's' : ''}. Click one below to select it for analysis:\n\n`;
 
-  crosstabs.slice(0, 10).forEach((ct, i) => {
-    response += `${i + 1}. **${ct.name}**\n`;
-    response += `   Created: ${new Date(ct.created_at).toLocaleDateString()}\n\n`;
-  });
+  // Return crosstabs data for UI to render as buttons
+  const crosstabsData = crosstabs.slice(0, 10).map(ct => ({
+    id: ct.id,
+    name: ct.name
+  }));
 
   if (crosstabs.length > 10) {
-    response += `\n*...and ${crosstabs.length - 10} more*\n`;
+    response += `\n*Showing first 10 of ${crosstabs.length} crosstabs*\n`;
   }
 
-  response += '\n**Tip**: Click on a crosstab in the sidebar or say "Analyze [crosstab name]" to get insights.';
-
-  return response;
+  return {
+    response,
+    crosstabs: crosstabsData
+  };
 }
+
 
 async function handleAnalyzeIntent(crosstabId: string): Promise<string> {
   if (!orchestrator) {

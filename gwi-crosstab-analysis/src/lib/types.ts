@@ -135,6 +135,7 @@ export interface ChatMessage {
   timestamp: Date;
   crosstabId?: string;
   analysisType?: string;
+  crosstabs?: Array<{ id: string; name: string }>;
 }
 
 export interface ChatSession {
