@@ -42,8 +42,28 @@ export class GWICrosstabClient {
     }
 
     const data = await response.json();
-    console.log('List crosstabs response:', JSON.stringify(data).substring(0, 500));
-    return data.crosstabs || data.items || data.data || [];
+    console.log('List crosstabs raw response:', JSON.stringify(data, null, 2).substring(0, 1000));
+
+    // Handle various response formats
+    let crosstabs: CrosstabSummary[] = [];
+
+    if (Array.isArray(data)) {
+      // Response is directly an array
+      crosstabs = data;
+    } else if (data.crosstabs && Array.isArray(data.crosstabs)) {
+      crosstabs = data.crosstabs;
+    } else if (data.items && Array.isArray(data.items)) {
+      crosstabs = data.items;
+    } else if (data.data && Array.isArray(data.data)) {
+      crosstabs = data.data;
+    } else if (data.data?.crosstabs && Array.isArray(data.data.crosstabs)) {
+      crosstabs = data.data.crosstabs;
+    } else {
+      console.warn('Unexpected response format. Keys:', Object.keys(data));
+    }
+
+    console.log(`Found ${crosstabs.length} crosstabs`);
+    return crosstabs;
   }
 
   /**

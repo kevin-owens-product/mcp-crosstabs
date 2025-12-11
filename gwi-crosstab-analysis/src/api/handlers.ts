@@ -358,9 +358,11 @@ async function handleListIntent(searchTerm?: string): Promise<string> {
     : await orchestrator.client.listCrosstabs();
 
   if (crosstabs.length === 0) {
-    return searchTerm
+    const baseMessage = searchTerm
       ? `No crosstabs found matching "${searchTerm}".`
-      : 'No crosstabs available.';
+      : 'No saved crosstabs found in your account.';
+
+    return `${baseMessage}\n\nThis could mean:\n- The API key doesn't have access to any saved crosstabs\n- No crosstabs have been created in this account\n- The API key may need different permissions\n\nYou can try using the **GWI Data Queries** prompts to ask questions about GWI data directly.`;
   }
 
   let response = searchTerm
