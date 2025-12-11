@@ -1,10 +1,36 @@
-// Spark API Client for AI-powered GWI queries
-// Based on: https://api.globalwebindex.com/docs/spark-api/reference/chat/chat-with-the-service
+// MCP Tools API Client for AI-powered GWI queries
+// Based on: https://api.globalwebindex.com/docs/spark-mcp/reference/mcp-tools/execute-gwi-mcp-tool-calls
 
-// API Response Types
-export interface SparkInsight {
+// JSON-RPC 2.0 Request Format
+interface MCPRequest {
+  jsonrpc: '2.0';
   id: string;
-  text: string;
+  method: 'tools/call';
+  params: {
+    name: 'chat_gwi' | 'explore_insight_gwi';
+    arguments: Record<string, unknown>;
+  };
+}
+
+// JSON-RPC 2.0 Response Format
+interface MCPResponse {
+  jsonrpc: '2.0';
+  id: string;
+  result: {
+    content: Array<{
+      type: 'text';
+      text: string;
+    }>;
+    isError: boolean;
+  };
+}
+
+// Parsed response from chat_gwi tool
+export interface ChatGWIResult {
+  response: string;
+  insightIds: string[];
+  chatId: string;
+  sources: SparkSource;
 }
 
 export interface SparkSource {
@@ -15,16 +41,9 @@ export interface SparkSource {
   waves?: Array<{ code: string; name: string }>;
 }
 
-export interface SparkAPIResponse {
-  message: string;
-  insights: SparkInsight[];
-  chat_id: string;
-  sources: SparkSource;
-}
-
 export interface SparkResponse {
   message: string;
-  insights: SparkInsight[];
+  insights: Array<{ id: string; text: string }>;
   chatId: string;
   sources: SparkSource;
   formattedText: string;
@@ -36,12 +55,10 @@ export interface SparkQueryOptions {
 }
 
 export interface InsightDetail {
-  insight: {
-    id: string;
-    text: string;
-    metrics: string[];
-  };
-  calculations: Array<{
+  insightId: string;
+  text: string;
+  metrics: Array<{
+    name: string;
     percentage: number;
     index: number;
     sample: number;
@@ -52,6 +69,7 @@ export class SparkAPIClient {
   private baseUrl: string;
   private apiKey: string;
   private currentChatId: string | null = null;
+  private requestCounter: number = 0;
 
   constructor(apiKey: string, useAlphaEnv: boolean = true) {
     this.apiKey = apiKey;
@@ -61,148 +79,211 @@ export class SparkAPIClient {
   }
 
   /**
-   * Send a natural language query to the Spark API
-   * POST /v1/spark-api/generic
+   * Generate unique request ID for JSON-RPC
    */
-  async query(prompt: string, options?: SparkQueryOptions): Promise<SparkResponse> {
-    const url = `${this.baseUrl}/v1/spark-api/generic`;
-    console.log(`Spark API request to: ${url}`);
-    console.log(`Spark API prompt: ${prompt}`);
+  private generateRequestId(): string {
+    this.requestCounter++;
+    return `req-${Date.now()}-${this.requestCounter}`;
+  }
 
-    const requestBody: Record<string, unknown> = { prompt };
-
-    // Include chat_id for conversation continuity
-    if (options?.chat_id) {
-      requestBody.chat_id = options.chat_id;
-    } else if (this.currentChatId) {
-      requestBody.chat_id = this.currentChatId;
-    }
-
-    // Include docked audiences if provided
-    if (options?.docked_audiences) {
-      requestBody.docked_audiences = options.docked_audiences;
-    }
+  /**
+   * Send a request to the MCP tools endpoint
+   */
+  private async sendMCPRequest(request: MCPRequest): Promise<MCPResponse> {
+    const url = `${this.baseUrl}/v1/spark-api/mcp`;
+    console.log(`MCP API request to: ${url}`);
+    console.log(`MCP API request body:`, JSON.stringify(request, null, 2));
 
     const response = await fetch(url, {
       method: 'POST',
       headers: {
-        'Authorization': this.apiKey,
+        'Authorization': `Bearer ${this.apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(requestBody),
+      body: JSON.stringify(request),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Spark API error (${response.status}): ${errorText}`);
+      throw new Error(`MCP API error (${response.status}): ${errorText}`);
     }
 
-    const data: SparkAPIResponse = await response.json();
-    console.log('Spark API raw response:', JSON.stringify(data, null, 2).substring(0, 2000));
+    const data: MCPResponse = await response.json();
+    console.log('MCP API raw response:', JSON.stringify(data, null, 2).substring(0, 3000));
+
+    if (data.result?.isError) {
+      const errorText = data.result.content.map(c => c.text).join('\n');
+      throw new Error(`MCP API returned error: ${errorText}`);
+    }
+
+    return data;
+  }
+
+  /**
+   * Send a natural language query using the chat_gwi tool
+   * POST /v1/spark-api/mcp with tools/call method
+   */
+  async query(prompt: string, options?: SparkQueryOptions): Promise<SparkResponse> {
+    console.log(`MCP chat_gwi prompt: ${prompt}`);
+
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      id: this.generateRequestId(),
+      method: 'tools/call',
+      params: {
+        name: 'chat_gwi',
+        arguments: {
+          prompt,
+          ...(options?.chat_id ? { chat_id: options.chat_id } : {}),
+          ...(this.currentChatId && !options?.chat_id ? { chat_id: this.currentChatId } : {}),
+          ...(options?.docked_audiences ? { docked_audiences: options.docked_audiences } : {}),
+        },
+      },
+    };
+
+    const response = await this.sendMCPRequest(request);
+
+    // Parse the response content
+    const contentText = response.result.content.map(c => c.text).join('\n');
+    const parsed = this.parseChatGWIResponse(contentText);
 
     // Store chat_id for conversation continuity
-    if (data.chat_id) {
-      this.currentChatId = data.chat_id;
+    if (parsed.chatId) {
+      this.currentChatId = parsed.chatId;
     }
 
     // Format the response for display
-    const formattedText = this.formatResponse(data);
+    const formattedText = this.formatResponse(parsed);
 
     return {
-      message: data.message || '',
-      insights: data.insights || [],
-      chatId: data.chat_id,
-      sources: data.sources || {},
+      message: parsed.response,
+      insights: parsed.insightIds.map(id => ({ id, text: '' })),
+      chatId: parsed.chatId,
+      sources: parsed.sources,
       formattedText,
     };
   }
 
   /**
-   * Format API response into readable text
+   * Parse the text response from chat_gwi tool
+   * The MCP endpoint returns verbose text that we can use directly
    */
-  private formatResponse(data: SparkAPIResponse): string {
-    const parts: string[] = [];
+  private parseChatGWIResponse(text: string): ChatGWIResult {
+    // The MCP endpoint returns more verbose, readable text
+    // Extract any structured data if present, otherwise use the text as-is
 
-    // Add main message if present
-    if (data.message && data.message.trim().length > 0) {
-      parts.push(data.message);
+    let chatId = '';
+    let insightIds: string[] = [];
+    const sources: SparkSource = {};
+
+    // Try to extract chat_id if present in the response
+    const chatIdMatch = text.match(/chat_id[:\s]+([a-zA-Z0-9-]+)/i);
+    if (chatIdMatch) {
+      chatId = chatIdMatch[1];
     }
 
-    // Add insights as bullet points
-    if (data.insights && data.insights.length > 0) {
-      if (parts.length > 0) {
-        parts.push(''); // Empty line separator
-      }
-      parts.push('**Key Insights:**\n');
-      data.insights.forEach((insight, index) => {
-        parts.push(`${index + 1}. ${insight.text}`);
-      });
+    // Try to extract insight IDs if present (format: insight-xxx or similar)
+    const insightMatches = text.matchAll(/insight[_-]?id[:\s]+([a-zA-Z0-9-]+)/gi);
+    for (const match of insightMatches) {
+      insightIds.push(match[1]);
     }
 
-    // Add sources section
-    const sourceTexts: string[] = [];
-
-    if (data.sources) {
-      if (data.sources.topics && data.sources.topics.length > 0) {
-        sourceTexts.push(`Topics: ${data.sources.topics.join(', ')}`);
-      }
-      if (data.sources.locations && data.sources.locations.length > 0) {
-        const locationNames = data.sources.locations.map(l => l.name).join(', ');
-        sourceTexts.push(`Markets: ${locationNames}`);
-      }
-      if (data.sources.waves && data.sources.waves.length > 0) {
-        const waveNames = data.sources.waves.map(w => w.name).join(', ');
-        sourceTexts.push(`Time Period: ${waveNames}`);
-      }
-      if (data.sources.datasets && data.sources.datasets.length > 0) {
-        const datasetNames = data.sources.datasets.map(d => d.name).join(', ');
-        sourceTexts.push(`Dataset: ${datasetNames}`);
-      }
-      if (data.sources.audiences && data.sources.audiences.length > 0) {
-        const audienceNames = data.sources.audiences.map(a => a.name).join(', ');
-        sourceTexts.push(`Audiences: ${audienceNames}`);
-      }
+    // Extract source information if structured
+    const topicsMatch = text.match(/topics?[:\s]+([^\n]+)/i);
+    if (topicsMatch) {
+      sources.topics = topicsMatch[1].split(',').map(t => t.trim());
     }
 
-    if (sourceTexts.length > 0) {
-      parts.push('');
-      parts.push('---');
-      parts.push('**Sources:**');
-      sourceTexts.forEach(s => parts.push(`- ${s}`));
+    const marketsMatch = text.match(/(?:markets?|locations?|countries?)[:\s]+([^\n]+)/i);
+    if (marketsMatch) {
+      sources.locations = marketsMatch[1].split(',').map(l => ({
+        code: l.trim(),
+        name: l.trim()
+      }));
     }
 
-    // Handle empty response
-    if (parts.length === 0 || (parts.length === 1 && parts[0].trim() === '')) {
-      return 'The Spark API returned an empty response. Try:\n' +
+    return {
+      response: text,
+      insightIds,
+      chatId,
+      sources,
+    };
+  }
+
+  /**
+   * Format API response into readable text
+   * Since MCP returns verbose text, we mostly pass it through
+   */
+  private formatResponse(data: ChatGWIResult): string {
+    // MCP endpoint returns verbose text, so we can use it directly
+    // Just clean up and format nicely
+    let text = data.response;
+
+    // If the response is empty, provide helpful guidance
+    if (!text || text.trim().length === 0) {
+      return 'The MCP API returned an empty response. Try:\n' +
         '- Being more specific with your question\n' +
         '- Including a market (e.g., "in the UK")\n' +
         '- Specifying an audience (e.g., "among Gen Z")';
     }
 
-    return parts.join('\n');
+    return text;
   }
 
   /**
-   * Get detailed information about a specific insight
-   * GET /v1/spark-api/generic/insights/{id}
+   * Get detailed statistics for an insight using explore_insight_gwi tool
    */
-  async getInsightDetails(insightId: string): Promise<InsightDetail> {
-    const url = `${this.baseUrl}/v1/spark-api/generic/insights/${insightId}`;
-    console.log(`Fetching insight details: ${url}`);
+  async exploreInsight(insightId: string): Promise<InsightDetail> {
+    console.log(`MCP explore_insight_gwi for insight: ${insightId}`);
 
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Authorization': this.apiKey,
+    const request: MCPRequest = {
+      jsonrpc: '2.0',
+      id: this.generateRequestId(),
+      method: 'tools/call',
+      params: {
+        name: 'explore_insight_gwi',
+        arguments: {
+          insight_id: insightId,
+        },
       },
+    };
+
+    const response = await this.sendMCPRequest(request);
+    const contentText = response.result.content.map(c => c.text).join('\n');
+
+    // Parse the insight detail response
+    return this.parseInsightDetail(insightId, contentText);
+  }
+
+  /**
+   * Parse explore_insight_gwi response
+   */
+  private parseInsightDetail(insightId: string, text: string): InsightDetail {
+    const metrics: InsightDetail['metrics'] = [];
+
+    // Try to extract percentage, index, and sample data from the text
+    const percentageMatches = text.match(/(\d+(?:\.\d+)?)\s*%/g) || [];
+    const indexMatches = [...text.matchAll(/index[:\s]+(\d+(?:\.\d+)?)/gi)];
+    const sampleMatches = [...text.matchAll(/sample[:\s]+(\d+(?:,\d+)?)/gi)];
+
+    percentageMatches.forEach((p, i) => {
+      const percentage = parseFloat(p.replace('%', ''));
+      const indexValue = indexMatches[i] ? parseFloat(indexMatches[i][1]) : 100;
+      const sampleValue = sampleMatches[i] ? parseInt(sampleMatches[i][1].replace(',', '')) : 0;
+
+      metrics.push({
+        name: `Metric ${i + 1}`,
+        percentage,
+        index: indexValue,
+        sample: sampleValue,
+      });
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Spark API error (${response.status}): ${errorText}`);
-    }
-
-    return await response.json();
+    return {
+      insightId,
+      text,
+      metrics,
+    };
   }
 
   /**
