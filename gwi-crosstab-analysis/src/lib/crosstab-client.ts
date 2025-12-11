@@ -1,11 +1,24 @@
 import type { Crosstab, CrosstabSummary, CrosstabDataRow } from './types';
 
+// API Response types based on official documentation
+// https://api.globalwebindex.com/docs/platform-api/reference/crosstabs/v2-list-crosstabs
+interface APIProject {
+  uuid: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  folder_id?: string;
+  copied_from?: string;
+  notes?: string;
+  sharing_type?: string;
+}
+
 export class GWICrosstabClient {
   private baseUrl: string;
   private apiKey: string;
 
   constructor(apiKey: string, useAlphaEnv: boolean = true) {
-    // Normalize API key - don't double-add Bearer prefix
+    // Store API key as-is (no Bearer prefix needed per documentation)
     this.apiKey = apiKey.startsWith('Bearer ') ? apiKey.replace('Bearer ', '') : apiKey;
     this.baseUrl = useAlphaEnv
       ? 'https://api-alpha.globalwebindex.com'
@@ -14,6 +27,8 @@ export class GWICrosstabClient {
 
   /**
    * List all saved crosstabs
+   * GET /v2/saved/crosstabs
+   * Docs: https://api.globalwebindex.com/docs/platform-api/reference/crosstabs/v2-list-crosstabs
    */
   async listCrosstabs(params?: {
     folder_id?: string;
@@ -28,9 +43,12 @@ export class GWICrosstabClient {
       if (params.offset) url.searchParams.append('offset', params.offset.toString());
     }
 
+    console.log(`Listing crosstabs from: ${url.toString()}`);
+
     const response = await fetch(url.toString(), {
       headers: {
-        'Authorization': `Bearer ${this.apiKey}`,
+        // Authorization format per docs: just the API key, no Bearer prefix
+        'Authorization': this.apiKey,
         'Accept': 'application/json'
       }
     });
@@ -42,25 +60,37 @@ export class GWICrosstabClient {
     }
 
     const data = await response.json();
-    console.log('List crosstabs raw response:', JSON.stringify(data, null, 2).substring(0, 1000));
+    console.log('List crosstabs raw response:', JSON.stringify(data, null, 2).substring(0, 1500));
 
-    // Handle various response formats
-    let crosstabs: CrosstabSummary[] = [];
+    // Parse response according to API documentation
+    // Response format: { count: number, projects: [...] }
+    let projects: APIProject[] = [];
 
-    if (Array.isArray(data)) {
+    if (data.projects && Array.isArray(data.projects)) {
+      // Correct format per documentation
+      projects = data.projects;
+    } else if (Array.isArray(data)) {
       // Response is directly an array
-      crosstabs = data;
+      projects = data;
     } else if (data.crosstabs && Array.isArray(data.crosstabs)) {
-      crosstabs = data.crosstabs;
+      // Legacy format
+      projects = data.crosstabs;
     } else if (data.items && Array.isArray(data.items)) {
-      crosstabs = data.items;
-    } else if (data.data && Array.isArray(data.data)) {
-      crosstabs = data.data;
-    } else if (data.data?.crosstabs && Array.isArray(data.data.crosstabs)) {
-      crosstabs = data.data.crosstabs;
+      projects = data.items;
     } else {
       console.warn('Unexpected response format. Keys:', Object.keys(data));
+      console.warn('Full response:', JSON.stringify(data));
     }
+
+    // Map API response to CrosstabSummary format
+    const crosstabs: CrosstabSummary[] = projects.map(project => ({
+      id: project.uuid,
+      uuid: project.uuid,
+      name: project.name,
+      created_at: project.created_at,
+      updated_at: project.updated_at,
+      folder_id: project.folder_id,
+    }));
 
     console.log(`Found ${crosstabs.length} crosstabs`);
     return crosstabs;
@@ -76,19 +106,28 @@ export class GWICrosstabClient {
     const url = `${this.baseUrl}/v2/saved/crosstabs/${crosstabId}` +
                 (includeData ? '' : '?include_data=false');
 
+    console.log(`Fetching crosstab: ${url}`);
+
     const response = await fetch(url, {
       headers: {
-        'Authorization': `Bearer ${this.apiKey}`,
+        'Authorization': this.apiKey,
         'Accept': 'application/json'
       }
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to get crosstab: ${response.statusText}`);
+      const errorText = await response.text();
+      console.error(`Get crosstab API error (${response.status}):`, errorText);
+      throw new Error(`Failed to get crosstab: ${response.status} ${response.statusText} - ${errorText.substring(0, 200)}`);
     }
 
     if (!includeData) {
-      return await response.json();
+      const data = await response.json();
+      // Normalize uuid to id
+      return {
+        ...data,
+        id: data.uuid || data.id,
+      };
     }
 
     // Parse JSON Lines response for full data
@@ -112,6 +151,8 @@ export class GWICrosstabClient {
    */
   private async parseJSONLinesResponse(response: Response): Promise<Crosstab> {
     const text = await response.text();
+    console.log('Crosstab response (first 500 chars):', text.substring(0, 500));
+
     const lines = text.split('\n').filter(l => l.trim());
 
     if (lines.length === 0) {
@@ -133,6 +174,7 @@ export class GWICrosstabClient {
 
     return {
       ...config,
+      id: config.uuid || config.id,
       data
     };
   }
