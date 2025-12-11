@@ -9,6 +9,13 @@ interface MessageBubbleProps {
 const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onSelectCrosstab }) => {
   const isUser = message.role === 'user';
 
+  // Debug logging
+  if (!isUser) {
+    console.log('MessageBubble - message:', message);
+    console.log('MessageBubble - crosstabs:', message.crosstabs);
+    console.log('MessageBubble - crosstabs length:', message.crosstabs?.length || 0);
+  }
+
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div className={`max-w-3xl ${isUser ? 'order-2' : 'order-1'}`}>
