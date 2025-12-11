@@ -50,6 +50,7 @@ function App() {
           ref={chatRef}
           selectedCrosstabId={selectedCrosstab}
           onOpenPromptLibrary={() => setShowPromptLibrary(true)}
+          onSelectCrosstab={setSelectedCrosstab}
         />
       </div>
 

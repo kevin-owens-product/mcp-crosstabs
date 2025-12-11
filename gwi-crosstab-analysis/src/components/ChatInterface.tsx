@@ -6,6 +6,7 @@ import type { ChatMessage } from '@/lib/types';
 interface ChatInterfaceProps {
   selectedCrosstabId: string | null;
   onOpenPromptLibrary: () => void;
+  onSelectCrosstab: (id: string) => void;
 }
 
 export interface ChatInterfaceHandle {
@@ -15,7 +16,7 @@ export interface ChatInterfaceHandle {
 }
 
 const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>(
-  ({ selectedCrosstabId, onOpenPromptLibrary }, ref) => {
+  ({ selectedCrosstabId, onOpenPromptLibrary, onSelectCrosstab }, ref) => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
@@ -83,6 +84,7 @@ const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>(
           content: data.response,
           timestamp: new Date(),
           analysisType: data.analysisType,
+          crosstabs: data.crosstabs || undefined,
         };
 
         setMessages(prev => [...prev, assistantMessage]);
@@ -126,7 +128,11 @@ const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>(
         ) : (
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {messages.map(message => (
-              <MessageBubble key={message.id} message={message} />
+              <MessageBubble
+                key={message.id}
+                message={message}
+                onSelectCrosstab={onSelectCrosstab}
+              />
             ))}
 
             {loading && (
