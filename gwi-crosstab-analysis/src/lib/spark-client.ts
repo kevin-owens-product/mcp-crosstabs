@@ -85,11 +85,14 @@ export class SparkAPIClient {
   private currentChatId: string | null = null;
   private requestCounter: number = 0;
 
-  constructor(apiKey: string, useAlphaEnv: boolean = true) {
-    this.apiKey = apiKey;
+  constructor(apiKey: string, useAlphaEnv: boolean = false) {
+    // Store API key without Bearer prefix - MCP endpoint expects raw key
+    this.apiKey = apiKey.replace(/^Bearer\s+/i, '');
+    // Default to production URL as per MCP documentation
     this.baseUrl = useAlphaEnv
       ? 'https://api-alpha.globalwebindex.com'
       : 'https://api.globalwebindex.com';
+    console.log(`SparkAPIClient initialized with baseUrl: ${this.baseUrl}`);
   }
 
   /**
@@ -102,31 +105,40 @@ export class SparkAPIClient {
 
   /**
    * Send a request to the MCP tools endpoint
+   * Per documentation: https://api.globalwebindex.com/docs/spark-mcp/reference/mcp-tools/execute-gwi-mcp-tool-calls
    */
   private async sendMCPRequest(request: MCPRequest): Promise<MCPResponse> {
     const url = `${this.baseUrl}/v1/spark-api/mcp`;
-    console.log(`MCP API request to: ${url}`);
+    console.log(`=== MCP API REQUEST ===`);
+    console.log(`MCP API URL: ${url}`);
+    console.log(`MCP API tool: ${request.params.name}`);
     console.log(`MCP API request body:`, JSON.stringify(request, null, 2));
 
     const response = await fetch(url, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${this.apiKey}`,
+        // Per MCP docs: Authorization header with API key (no Bearer prefix)
+        'Authorization': this.apiKey,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(request),
     });
 
+    console.log(`MCP API response status: ${response.status}`);
+
     if (!response.ok) {
       const errorText = await response.text();
+      console.error(`MCP API error response:`, errorText);
       throw new Error(`MCP API error (${response.status}): ${errorText}`);
     }
 
     const data: MCPResponse = await response.json();
+    console.log('=== MCP API RESPONSE ===');
     console.log('MCP API raw response:', JSON.stringify(data, null, 2).substring(0, 3000));
 
     if (data.result?.isError) {
       const errorText = data.result.content.map(c => c.text).join('\n');
+      console.error('MCP API returned error:', errorText);
       throw new Error(`MCP API returned error: ${errorText}`);
     }
 

@@ -610,26 +610,80 @@ async function analyzeWithSpark(crosstab: any): Promise<string> {
     console.log('*** NO DATA - FALLING BACK TO SPARK API ***');
   }
 
-  // Fall back to Spark API if no data or local analysis failed
+  // Use MCP endpoint for analysis
   if (sparkClient) {
-    console.log('Falling back to Spark API for analysis');
-    const marketStr = context.markets.length > 0 ? context.markets.slice(0, 3).join(', ') : 'global';
-    const audienceStr = context.audiences.length > 0 ? context.audiences.join(', ') : 'internet users';
-    const topicsStr = context.rows.length > 0 ? context.rows.slice(0, 5).join(', ') : 'general consumer behavior';
+    console.log('=== USING MCP ENDPOINT FOR ANALYSIS ===');
 
-    const prompt = `Provide detailed consumer insights for ${audienceStr} in ${marketStr} about ${topicsStr}. Include specific percentages, comparisons to average, and actionable findings.`;
+    // Build a rich context-aware prompt from the crosstab definition
+    const marketStr = context.markets.length > 0 ? context.markets.slice(0, 5).join(', ') : 'global markets';
+    const audienceStr = context.audiences.length > 0 ? context.audiences.join(' and ') : 'general internet users';
+    const rowTopics = context.rows.length > 0 ? context.rows.slice(0, 10).join(', ') : '';
+    const columnTopics = context.columns.length > 0 ? context.columns.slice(0, 10).join(', ') : '';
+    const waveStr = context.waves.length > 0 ? context.waves.join(', ') : 'latest available data';
+
+    // Build a comprehensive prompt that asks for detailed analysis
+    let prompt = `Analyze consumer insights for the following crosstab:\n\n`;
+    prompt += `**Crosstab Name:** ${crosstab.name}\n`;
+    prompt += `**Markets:** ${marketStr}\n`;
+    prompt += `**Time Period:** ${waveStr}\n`;
+    prompt += `**Target Audience:** ${audienceStr}\n`;
+
+    if (rowTopics) {
+      prompt += `**Row Variables (Topics):** ${rowTopics}\n`;
+    }
+    if (columnTopics) {
+      prompt += `**Column Variables (Segments):** ${columnTopics}\n`;
+    }
+
+    prompt += `\nProvide a comprehensive analysis including:\n`;
+    prompt += `1. Key over-indexed behaviors (what this audience does more than average)\n`;
+    prompt += `2. Key under-indexed behaviors (what this audience does less than average)\n`;
+    prompt += `3. Demographic insights\n`;
+    prompt += `4. Actionable marketing recommendations\n`;
+    prompt += `5. Notable trends or patterns\n\n`;
+    prompt += `Include specific percentages and index values where available.`;
+
+    console.log('MCP prompt:', prompt);
 
     try {
       const response = await sparkClient.query(prompt);
+      console.log('MCP response received, insights count:', response.insights?.length || 0);
       result += response.formattedText;
+
+      // If we got insights, also try to explore the top ones for more detail
+      if (response.insights && response.insights.length > 0) {
+        const topInsights = response.insights
+          .filter(i => i.significance === 'high')
+          .slice(0, 3);
+
+        if (topInsights.length > 0) {
+          result += '\n\n## Detailed Insight Analysis\n\n';
+          for (const insight of topInsights) {
+            try {
+              console.log(`Exploring insight: ${insight.id}`);
+              const detail = await sparkClient.exploreInsight(insight.id);
+              if (detail.metrics && detail.metrics.length > 0) {
+                result += `### ${insight.content.substring(0, 100)}...\n`;
+                detail.metrics.forEach(m => {
+                  result += `- ${m.name}: ${m.percentage}% (Index: ${m.index})\n`;
+                });
+                result += '\n';
+              }
+            } catch (exploreError) {
+              console.warn(`Failed to explore insight ${insight.id}:`, exploreError);
+            }
+          }
+        }
+      }
+
       return result;
     } catch (error) {
-      console.error('Spark analysis error:', error);
-      return result + `\n*Analysis unavailable: ${error instanceof Error ? error.message : 'Unknown error'}*`;
+      console.error('MCP API error:', error);
+      return result + `\n*MCP analysis unavailable: ${error instanceof Error ? error.message : 'Unknown error'}*`;
     }
   }
 
-  return result + '\n*No data available for analysis. Please ensure the crosstab has been fully processed.*';
+  return result + '\n*No analysis API configured. Please ensure GWI_MCP_KEY is set.*';
 }
 
 // Build context object from crosstab definition
