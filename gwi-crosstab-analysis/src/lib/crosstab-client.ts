@@ -5,7 +5,8 @@ export class GWICrosstabClient {
   private apiKey: string;
 
   constructor(apiKey: string, useAlphaEnv: boolean = true) {
-    this.apiKey = apiKey;
+    // Normalize API key - don't double-add Bearer prefix
+    this.apiKey = apiKey.startsWith('Bearer ') ? apiKey.replace('Bearer ', '') : apiKey;
     this.baseUrl = useAlphaEnv
       ? 'https://api-alpha.globalwebindex.com'
       : 'https://api.globalwebindex.com';
@@ -35,11 +36,14 @@ export class GWICrosstabClient {
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to list crosstabs: ${response.statusText}`);
+      const errorText = await response.text();
+      console.error(`List crosstabs API error (${response.status}):`, errorText);
+      throw new Error(`Failed to list crosstabs: ${response.status} ${response.statusText} - ${errorText.substring(0, 200)}`);
     }
 
     const data = await response.json();
-    return data.crosstabs || [];
+    console.log('List crosstabs response:', JSON.stringify(data).substring(0, 500));
+    return data.crosstabs || data.items || data.data || [];
   }
 
   /**

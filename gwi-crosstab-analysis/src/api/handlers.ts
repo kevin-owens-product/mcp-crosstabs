@@ -247,9 +247,13 @@ export async function handleChatMessage(req: Request, res: Response) {
     });
   } catch (error: unknown) {
     console.error('Chat handler error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    console.error('Error stack:', errorStack);
     res.status(500).json({
       error: 'Failed to process message',
-      message: error instanceof Error ? error.message : 'Unknown error'
+      message: errorMessage,
+      details: errorStack?.split('\n').slice(0, 3).join('\n')
     });
   }
 }
