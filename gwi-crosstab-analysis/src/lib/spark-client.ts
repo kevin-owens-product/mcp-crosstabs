@@ -168,12 +168,16 @@ export class SparkAPIClient {
    * Parse the text response from chat_gwi tool
    * Format: Insight ID: <uuid> Content: <text>
    */
-  private parseChatGWIResponse(text: string): ChatGWIResult {
+  private parseChatGWIResponse(rawText: string): ChatGWIResult {
     let chatId = '';
     const insights: Array<{ id: string; content: string }> = [];
     const sources: SparkSource = {};
 
+    // Normalize line endings and whitespace
+    const text = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
     console.log('Parsing MCP response, length:', text.length);
+    console.log('First 200 chars:', text.substring(0, 200));
 
     // Extract Chat ID (format: "Chat ID: <uuid>")
     const chatIdMatch = text.match(/Chat ID:\s*([a-f0-9-]{36})/i);
@@ -182,13 +186,13 @@ export class SparkAPIClient {
       console.log('Found Chat ID:', chatId);
     }
 
-    // Extract insights - pattern matches "Insight ID: <uuid> Content: <text>"
-    // Using [^\S\n]* to match any whitespace except newlines between ID and Content
-    const insightPattern = /Insight ID:\s*([a-f0-9-]{36})[^\S\n]*Content:\s*([^\n]+)/gi;
+    // Extract insights - try multiple patterns
+    // Pattern 1: "Insight ID: <uuid> Content: <text>" with any whitespace
+    const insightPattern = /Insight\s+ID:\s*([a-f0-9-]{36})\s+Content:\s*(.+?)(?=\nInsight\s+ID:|\nSources|\nProcessing|$)/gis;
 
     let match;
     while ((match = insightPattern.exec(text)) !== null) {
-      const content = match[2].trim();
+      const content = match[2].trim().replace(/\n/g, ' ');
       if (content.length > 0) {
         insights.push({
           id: match[1],
@@ -197,9 +201,28 @@ export class SparkAPIClient {
       }
     }
 
+    // If no insights found, try a simpler line-by-line pattern
+    if (insights.length === 0) {
+      console.log('No insights found with first pattern, trying fallback...');
+      const lines = text.split('\n');
+      for (const line of lines) {
+        const lineMatch = line.match(/Insight\s+ID:\s*([a-f0-9-]{36})\s+Content:\s*(.+)/i);
+        if (lineMatch) {
+          insights.push({
+            id: lineMatch[1],
+            content: lineMatch[2].trim()
+          });
+        }
+      }
+    }
+
     console.log('Parsed insights count:', insights.length);
     if (insights.length > 0) {
-      console.log('First insight:', insights[0]);
+      console.log('First insight:', JSON.stringify(insights[0]));
+    } else {
+      // Log a sample of the text to help debug
+      console.log('No insights found. Sample text around "Insight":',
+        text.includes('Insight') ? text.substring(text.indexOf('Insight'), text.indexOf('Insight') + 150) : 'No "Insight" found');
     }
 
     // Extract source information
