@@ -490,6 +490,11 @@ async function handleListIntentWithData(searchTerm?: string): Promise<{
     name: ct.name
   }));
 
+  // Debug: Log the crosstabs data being returned
+  console.log('handleListIntentWithData - crosstabs fetched:', crosstabs.length);
+  console.log('handleListIntentWithData - crosstabsData:', JSON.stringify(crosstabsData, null, 2));
+  console.log('handleListIntentWithData - first crosstab:', crosstabs[0] ? JSON.stringify(crosstabs[0], null, 2) : 'none');
+
   if (crosstabs.length > 10) {
     response += `\n*Showing first 10 of ${crosstabs.length} crosstabs*\n`;
   }
