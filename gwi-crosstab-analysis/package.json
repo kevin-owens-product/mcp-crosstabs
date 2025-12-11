@@ -13,7 +13,7 @@
     "server": "tsx src/api/server.ts",
     "dev:full": "concurrently \"npm run dev\" \"npm run server\"",
     "start": "NODE_ENV=production node --import tsx src/api/server.ts",
-    "render-build": "npm install && npm run build"
+    "render-build": "npm install --include=dev && npm run build"
   },
   "dependencies": {
     "react": "^18.2.0",
