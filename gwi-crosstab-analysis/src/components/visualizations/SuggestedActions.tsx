@@ -67,39 +67,48 @@ export const SuggestedActions: React.FC<SuggestedActionsProps> = ({
     'drill-down': 'Drill Down',
   };
 
+  const categoryOrder = ['analysis', 'drill-down', 'visualization', 'export'];
+
   return (
-    <div className="mt-4 pt-4 border-t border-gray-200">
-      <p className="text-sm font-medium text-gray-700 mb-3">
+    <div className="mt-5 pt-5 border-t border-slate-200 dark:border-slate-700">
+      <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-4">
         What would you like to do next?
       </p>
 
-      <div className="space-y-3">
-        {Object.entries(groupedActions).map(([category, categoryActions]) => (
-          <div key={category}>
-            {Object.keys(groupedActions).length > 1 && (
-              <p className="text-xs text-gray-500 mb-2 uppercase tracking-wide">
-                {categoryLabels[category] || category}
-              </p>
-            )}
-            <div className="flex flex-wrap gap-2">
-              {categoryActions.map((action) => {
-                const IconComponent = action.icon ? icons[action.icon] : DefaultIcon;
+      <div className="space-y-4">
+        {categoryOrder.map(category => {
+          const categoryActions = groupedActions[category];
+          if (!categoryActions || categoryActions.length === 0) return null;
 
-                return (
-                  <button
-                    key={action.id}
-                    onClick={() => onActionClick(action.prompt)}
-                    className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 hover:border-gwi-blue hover:text-gwi-blue transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-gwi-blue focus:ring-offset-1"
-                    title={action.description}
-                  >
-                    {IconComponent && <IconComponent className="w-4 h-4" />}
-                    <span>{action.label}</span>
-                  </button>
-                );
-              })}
+          return (
+            <div key={category}>
+              {Object.keys(groupedActions).length > 1 && (
+                <p className="text-2xs font-medium text-slate-400 dark:text-slate-500 mb-2 uppercase tracking-wider">
+                  {categoryLabels[category] || category}
+                </p>
+              )}
+              <div className="flex flex-wrap gap-2">
+                {categoryActions.map((action) => {
+                  const IconComponent = action.icon ? icons[action.icon] : DefaultIcon;
+
+                  return (
+                    <button
+                      key={action.id}
+                      onClick={() => onActionClick(action.prompt)}
+                      className="group inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-primary-50 dark:hover:bg-primary-900/30 hover:border-primary-300 dark:hover:border-primary-600 hover:text-primary-700 dark:hover:text-primary-300 transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 dark:focus:ring-offset-slate-900"
+                      title={action.description}
+                    >
+                      {IconComponent && (
+                        <IconComponent className="w-4 h-4 text-slate-400 dark:text-slate-500 group-hover:text-primary-500 dark:group-hover:text-primary-400 transition-colors" />
+                      )}
+                      <span>{action.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
