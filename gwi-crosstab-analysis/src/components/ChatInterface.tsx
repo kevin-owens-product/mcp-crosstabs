@@ -83,6 +83,10 @@ const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>(
         console.log('API response crosstabs:', data.crosstabs);
         console.log('API response crosstabs length:', data.crosstabs?.length || 0);
 
+        // Debug logging for visualizations
+        console.log('API response visualizations:', data.visualizations);
+        console.log('API response suggestedActions:', data.suggestedActions);
+
         const assistantMessage: ChatMessage = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
@@ -90,6 +94,8 @@ const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>(
           timestamp: new Date(),
           analysisType: data.analysisType,
           crosstabs: data.crosstabs || undefined,
+          visualizations: data.visualizations || undefined,
+          suggestedActions: data.suggestedActions || undefined,
         };
 
         setMessages(prev => [...prev, assistantMessage]);
@@ -137,6 +143,7 @@ const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>(
                 key={message.id}
                 message={message}
                 onSelectCrosstab={onSelectCrosstab}
+                onSendMessage={handleSendWithMessage}
               />
             ))}
 
