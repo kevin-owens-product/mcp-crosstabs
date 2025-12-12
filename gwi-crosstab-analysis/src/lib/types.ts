@@ -1,5 +1,51 @@
 // Complete type definitions for the entire system
 
+// ============================================================================
+// AUDIENCE TYPES (v2 API)
+// ============================================================================
+
+export interface AudienceExpression {
+  and?: AudienceExpression[];
+  or?: AudienceExpression[];
+  not?: AudienceExpression;
+  question?: string;
+  datapoints?: string[];
+  suffix?: string;
+}
+
+export interface AudiencePermissions {
+  accessible?: boolean;
+  containsUnknownData?: boolean;
+}
+
+export interface Audience {
+  id: string;
+  v1_id?: string;
+  name: string;
+  expression: AudienceExpression;
+  created_at: string;
+  updated_at: string;
+  folder_id?: string | null;
+  position?: number;
+  permissions?: AudiencePermissions;
+  datasets?: string[];
+  flags?: string[];  // e.g., "authored", "curated", "isP2"
+}
+
+export interface AudienceSummary {
+  id: string;
+  v1_id?: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  folder_id?: string | null;
+  flags?: string[];
+}
+
+// ============================================================================
+// CROSSTAB TYPES
+// ============================================================================
+
 export interface CrosstabMetrics {
   positive_sample: number;
   positive_size: number;

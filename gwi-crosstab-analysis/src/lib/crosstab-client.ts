@@ -1,4 +1,4 @@
-import type { Crosstab, CrosstabSummary, CrosstabDataRow } from './types';
+import type { Crosstab, CrosstabSummary, CrosstabDataRow, Audience, AudienceSummary } from './types';
 
 // API Response types based on official documentation
 // https://api.globalwebindex.com/docs/platform-api/reference/crosstabs/v2-list-crosstabs
@@ -11,6 +11,25 @@ interface APIProject {
   copied_from?: string;
   notes?: string;
   sharing_type?: string;
+}
+
+// API Response types for audiences
+// https://api.globalwebindex.com/docs/platform-api/reference/audiences/v2-list-audiences
+interface APIAudience {
+  id: string;
+  v1_id?: string;
+  name: string;
+  expression: unknown;
+  created_at: string;
+  updated_at: string;
+  folder_id?: string | null;
+  position?: number;
+  permissions?: {
+    accessible?: boolean;
+    containsUnknownData?: boolean;
+  };
+  datasets?: string[];
+  flags?: string[];
 }
 
 export class GWICrosstabClient {
@@ -281,6 +300,131 @@ export class GWICrosstabClient {
     const lowerQuery = query.toLowerCase();
     return all.filter(ct =>
       ct.name.toLowerCase().includes(lowerQuery)
+    );
+  }
+
+  // ============================================================================
+  // AUDIENCE METHODS
+  // ============================================================================
+
+  /**
+   * List all saved audiences
+   * GET /v2/saved/audiences
+   * Docs: https://api.globalwebindex.com/docs/platform-api/reference/audiences/v2-list-audiences
+   */
+  async listAudiences(params?: {
+    folder_id?: string;
+    flags?: string[];
+  }): Promise<AudienceSummary[]> {
+    const url = new URL(`${this.baseUrl}/v2/saved/audiences`);
+
+    if (params) {
+      if (params.folder_id) url.searchParams.append('folder_id', params.folder_id);
+      if (params.flags && params.flags.length > 0) {
+        params.flags.forEach(flag => url.searchParams.append('flags', flag));
+      }
+    }
+
+    console.log(`Listing audiences from: ${url.toString()}`);
+
+    const response = await fetch(url.toString(), {
+      headers: {
+        'Authorization': this.apiKey,
+        'Accept': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`List audiences API error (${response.status}):`, errorText);
+      throw new Error(`Failed to list audiences: ${response.status} ${response.statusText} - ${errorText.substring(0, 200)}`);
+    }
+
+    const data = await response.json();
+    console.log('List audiences raw response:', JSON.stringify(data, null, 2).substring(0, 1500));
+
+    // Parse response - could be { data: [...] } or direct array
+    let audiences: APIAudience[] = [];
+
+    if (data.data && Array.isArray(data.data)) {
+      audiences = data.data;
+    } else if (Array.isArray(data)) {
+      audiences = data;
+    } else if (data.audiences && Array.isArray(data.audiences)) {
+      audiences = data.audiences;
+    } else {
+      console.warn('Unexpected audiences response format. Keys:', Object.keys(data));
+      console.warn('Full response:', JSON.stringify(data));
+    }
+
+    // Map API response to AudienceSummary format
+    const result: AudienceSummary[] = audiences.map(audience => ({
+      id: audience.id,
+      v1_id: audience.v1_id,
+      name: audience.name,
+      created_at: audience.created_at,
+      updated_at: audience.updated_at,
+      folder_id: audience.folder_id,
+      flags: audience.flags,
+    }));
+
+    console.log(`Found ${result.length} audiences`);
+    return result;
+  }
+
+  /**
+   * Get a specific audience by ID
+   * GET /v2/saved/audiences/{id}
+   * Docs: https://api.globalwebindex.com/docs/platform-api/reference/audiences/v2-audience-detail
+   */
+  async getAudience(audienceId: string): Promise<Audience> {
+    const url = `${this.baseUrl}/v2/saved/audiences/${audienceId}`;
+    console.log(`Fetching audience: ${url}`);
+
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': this.apiKey,
+        'Accept': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`Get audience API error (${response.status}):`, errorText);
+      throw new Error(`Failed to get audience: ${response.status} ${response.statusText} - ${errorText.substring(0, 200)}`);
+    }
+
+    const data = await response.json();
+    console.log('Audience detail keys:', Object.keys(data));
+    console.log('Audience name:', data.name);
+
+    // Map to Audience type
+    const audience: Audience = {
+      id: data.id,
+      v1_id: data.v1_id,
+      name: data.name,
+      expression: data.expression || {},
+      created_at: data.created_at,
+      updated_at: data.updated_at,
+      folder_id: data.folder_id,
+      position: data.position,
+      permissions: data.permissions,
+      datasets: data.datasets,
+      flags: data.flags,
+    };
+
+    return audience;
+  }
+
+  /**
+   * Search audiences by name
+   */
+  async searchAudiences(query: string): Promise<AudienceSummary[]> {
+    const all = await this.listAudiences();
+
+    const lowerQuery = query.toLowerCase();
+    return all.filter(audience =>
+      audience.name.toLowerCase().includes(lowerQuery)
     );
   }
 

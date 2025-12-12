@@ -506,6 +506,108 @@ export async function analyzeCrosstab(req: Request, res: Response) {
   }
 }
 
+// ============================================================================
+// AUDIENCE HANDLERS
+// ============================================================================
+
+// Handler: List all audiences
+export async function listAudiences(req: Request, res: Response) {
+  if (!orchestrator) {
+    return res.status(503).json({ error: 'Audience API not configured' });
+  }
+
+  try {
+    const { folder_id, flags } = req.query;
+
+    // Parse flags from query string (can be single value or array)
+    let flagsArray: string[] | undefined;
+    if (flags) {
+      flagsArray = Array.isArray(flags) ? flags as string[] : [flags as string];
+    }
+
+    const cached = getFromCache('audiences-list');
+    if (cached && !folder_id && !flags) {
+      return res.json({ audiences: cached });
+    }
+
+    const audiences = await orchestrator.client.listAudiences({
+      folder_id: folder_id as string | undefined,
+      flags: flagsArray,
+    });
+
+    // Only cache if no filters applied
+    if (!folder_id && !flags) {
+      setCache('audiences-list', audiences);
+    }
+
+    res.json({ audiences });
+  } catch (error: unknown) {
+    console.error('List audiences error:', error);
+    res.status(500).json({
+      error: 'Failed to list audiences',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+}
+
+// Handler: Search audiences
+export async function searchAudiences(req: Request, res: Response) {
+  if (!orchestrator) {
+    return res.status(503).json({ error: 'Audience API not configured' });
+  }
+
+  try {
+    const { q } = req.query;
+
+    if (!q || typeof q !== 'string') {
+      return res.status(400).json({ error: 'Query parameter "q" is required' });
+    }
+
+    const results = await orchestrator.client.searchAudiences(q);
+
+    res.json({ results, count: results.length });
+  } catch (error: unknown) {
+    console.error('Search audiences error:', error);
+    res.status(500).json({
+      error: 'Failed to search audiences',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+}
+
+// Handler: Get specific audience
+export async function getAudience(req: Request, res: Response) {
+  if (!orchestrator) {
+    return res.status(503).json({ error: 'Audience API not configured' });
+  }
+
+  try {
+    const { id } = req.params;
+
+    const cacheKey = `audience-${id}`;
+    const cached = getFromCache(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const audience = await orchestrator.client.getAudience(id);
+    setCache(cacheKey, audience);
+
+    res.json(audience);
+  } catch (error: unknown) {
+    console.error('Get audience error:', error);
+
+    if (error instanceof Error && error.message.includes('404')) {
+      return res.status(404).json({ error: 'Audience not found' });
+    }
+
+    res.status(500).json({
+      error: 'Failed to get audience',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+}
+
 // Extended result type for analysis handlers
 interface AnalysisResult {
   response: string;
