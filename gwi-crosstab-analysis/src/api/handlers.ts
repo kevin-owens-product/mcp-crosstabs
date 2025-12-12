@@ -1746,6 +1746,24 @@ async function handleListIntentWithData(searchTerm?: string, offset: number = 0,
       icon: 'chart',
       category: 'analysis',
     });
+
+    suggestedActions.push({
+      id: 'compare-audiences',
+      label: 'Compare Audiences',
+      description: 'Learn how to compare different segments',
+      prompt: 'How can I compare different audience segments?',
+      icon: 'compare',
+      category: 'analysis',
+    });
+
+    suggestedActions.push({
+      id: 'get-help',
+      label: 'What Can I Do?',
+      description: 'Learn about available features',
+      prompt: 'What can you help me with?',
+      icon: 'target',
+      category: 'drill-down',
+    });
   }
 
   // Pagination: Show more
