@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
 import MessageBubble from './MessageBubble';
 import WelcomeScreen from './WelcomeScreen';
-import type { ChatMessage } from '@/lib/types';
+import type { ChatMessage, PromptMetadata } from '@/lib/types';
 
 interface ChatInterfaceProps {
   selectedCrosstabId: string | null;
@@ -12,7 +12,7 @@ interface ChatInterfaceProps {
 export interface ChatInterfaceHandle {
   clearChat: () => void;
   setPrompt: (prompt: string) => void;
-  sendPrompt: (prompt: string) => void;
+  sendPrompt: (prompt: string, metadata?: PromptMetadata) => void;
 }
 
 const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>(
@@ -58,15 +58,15 @@ const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>(
         setInput(prompt);
         inputRef.current?.focus();
       },
-      sendPrompt: (prompt: string) => {
+      sendPrompt: (prompt: string, metadata?: PromptMetadata) => {
         setInput(prompt);
         setTimeout(() => {
-          handleSendWithMessage(prompt);
+          handleSendWithMessage(prompt, metadata);
         }, 0);
       }
     }));
 
-    const handleSendWithMessage = async (messageText: string) => {
+    const handleSendWithMessage = async (messageText: string, promptMetadata?: PromptMetadata) => {
       if (!messageText.trim() || loading) return;
 
       const userMessage: ChatMessage = {
@@ -75,6 +75,7 @@ const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>(
         content: messageText,
         timestamp: new Date(),
         crosstabId: selectedCrosstabId || undefined,
+        promptMetadata,
       };
 
       setMessages(prev => [...prev, userMessage]);
@@ -89,6 +90,7 @@ const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>(
             message: messageText,
             crosstabId: selectedCrosstabId,
             history: messages.slice(-5),
+            promptMetadata,
           }),
         });
 

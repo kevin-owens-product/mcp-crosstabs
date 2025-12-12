@@ -128,6 +128,13 @@ export interface KeyMetric {
   significance?: 'positive' | 'negative' | 'neutral';
 }
 
+// Prompt metadata for tracking which prompt was selected
+export interface PromptMetadata {
+  promptId: string;
+  promptTitle: string;
+  promptCategory: 'discovery' | 'analysis' | 'audience' | 'markets' | 'trends' | 'strategy' | 'spark' | 'suggested';
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -135,6 +142,7 @@ export interface ChatMessage {
   timestamp: Date;
   crosstabId?: string;
   analysisType?: string;
+  promptMetadata?: PromptMetadata;
   crosstabs?: Array<{ id: string; name: string }>;
   visualizations?: VisualizationData[];
   suggestedActions?: SuggestedAction[];

@@ -4,7 +4,7 @@ import { TemplateAnalysisEngine } from '../lib/analysis-templates';
 import { CrosstabAnalyzer } from '../lib/crosstab-analyzer';
 import { ResponseFormatter } from '../lib/response-formatter';
 import { SparkAPIClient, shouldUseSparkAPI, formatSparkResponse } from '../lib/spark-client';
-import type { Analysis, VisualizationData, SuggestedAction, IndexedItem } from '../lib/types';
+import type { Analysis, VisualizationData, SuggestedAction, IndexedItem, PromptMetadata } from '../lib/types';
 
 // Initialize services
 const API_KEY = process.env.GWI_API_KEY;
@@ -513,14 +513,734 @@ interface AnalysisResult {
   suggestedActions?: SuggestedAction[];
 }
 
+// ============================================================================
+// PROMPT LIBRARY SPECIALIZED HANDLERS
+// ============================================================================
+
+/**
+ * Handle queries from the prompt library with category-specific analysis
+ */
+async function handlePromptLibraryQuery(
+  message: string,
+  crosstabId: string,
+  promptMetadata: PromptMetadata | undefined,
+  includeChart: boolean = false
+): Promise<AnalysisResult> {
+  if (!orchestrator) {
+    return { response: 'The crosstab feature is not configured. Please add the GWI_API_KEY environment variable.' };
+  }
+
+  console.log(`=== handlePromptLibraryQuery ===`);
+  console.log(`Category: ${promptMetadata?.promptCategory}`);
+  console.log(`Title: ${promptMetadata?.promptTitle}`);
+  console.log(`Message: ${message.substring(0, 100)}`);
+
+  // Fetch crosstab data
+  let crosstab;
+  try {
+    crosstab = await orchestrator.client.getCrosstab(crosstabId, true);
+    console.log(`Fetched crosstab "${crosstab.name}" with ${crosstab.data?.length || 0} data points`);
+  } catch (error) {
+    console.error('Failed to fetch crosstab:', error);
+    return { response: `Failed to fetch crosstab data: ${error instanceof Error ? error.message : 'Unknown error'}` };
+  }
+
+  // Run base analysis
+  const analysis = analyzer.analyze(crosstab);
+  const context = buildCrosstabContext(crosstab);
+  const hasMultipleMarkets = (crosstab.country_codes?.length || 0) > 1;
+
+  // Route to category-specific formatter
+  const category = promptMetadata?.promptCategory || 'analysis';
+
+  switch (category) {
+    case 'discovery':
+      return formatDiscoveryAnalysis(message, crosstab, analysis, context, promptMetadata);
+
+    case 'audience':
+      return formatAudienceAnalysis(message, crosstab, analysis, context, promptMetadata);
+
+    case 'strategy':
+      return formatStrategyAnalysis(message, crosstab, analysis, context, promptMetadata);
+
+    case 'trends':
+      return formatTrendsAnalysis(message, crosstab, analysis, context, promptMetadata);
+
+    case 'markets':
+      return formatMarketsAnalysis(message, crosstab, analysis, context, hasMultipleMarkets, promptMetadata);
+
+    case 'spark':
+      // For Spark prompts, use the Spark API if available
+      if (sparkClient) {
+        return handleSparkQueryWithCrosstabContext(message, crosstab, analysis);
+      }
+      // Fall through to default analysis
+      return formatDefaultAnalysis(message, crosstab, analysis, context, includeChart, hasMultipleMarkets);
+
+    case 'analysis':
+    default:
+      return formatDefaultAnalysis(message, crosstab, analysis, context, includeChart, hasMultipleMarkets);
+  }
+}
+
+/**
+ * Format discovery-focused analysis (overview, structure, content types)
+ */
+function formatDiscoveryAnalysis(
+  _message: string,
+  crosstab: any,
+  analysis: Analysis,
+  context: ReturnType<typeof buildCrosstabContext>,
+  _promptMetadata?: PromptMetadata
+): AnalysisResult {
+  let response = `## ${crosstab.name}\n\n`;
+
+  // Add context header
+  const contextParts: string[] = [];
+  if (context.markets.length > 0) {
+    contextParts.push(`**Markets:** ${context.markets.slice(0, 5).join(', ')}${context.markets.length > 5 ? ` +${context.markets.length - 5} more` : ''}`);
+  }
+  if (context.waves.length > 0) {
+    contextParts.push(`**Period:** ${context.waves.join(', ')}`);
+  }
+  if (context.audiences.length > 0) {
+    contextParts.push(`**Audience:** ${context.audiences.join(', ')}`);
+  }
+  if (contextParts.length > 0) {
+    response += contextParts.join(' | ') + '\n\n---\n\n';
+  }
+
+  response += `### 📊 Overview\n\n`;
+  response += `This crosstab contains **${crosstab.data?.length || 0}** data points analyzing audience behaviors and attitudes.\n\n`;
+
+  // Structure overview
+  if (context.rows.length > 0 || context.columns.length > 0) {
+    response += `### 📋 Structure\n\n`;
+    if (context.rows.length > 0) {
+      response += `**Rows (Questions):** ${context.rows.slice(0, 5).join(', ')}${context.rows.length > 5 ? `... +${context.rows.length - 5} more` : ''}\n\n`;
+    }
+    if (context.columns.length > 0) {
+      response += `**Columns (Segments):** ${context.columns.slice(0, 5).join(', ')}${context.columns.length > 5 ? `... +${context.columns.length - 5} more` : ''}\n\n`;
+    }
+  }
+
+  // Key findings summary
+  response += `### 🔍 Key Findings Summary\n\n`;
+  response += `- **Over-indexed behaviors:** ${analysis.statistics.overIndexed.length} (index > 110)\n`;
+  response += `- **Under-indexed behaviors:** ${analysis.statistics.underIndexed.length} (index < 90)\n`;
+  response += `- **High significance insights:** ${analysis.insights.filter(i => i.significance === 'high').length}\n\n`;
+
+  // Top 5 standout findings
+  if (analysis.statistics.topIndexes.length > 0) {
+    response += `### ⭐ Top Standout Behaviors\n\n`;
+    analysis.statistics.topIndexes.slice(0, 5).forEach((item, i) => {
+      response += `${i + 1}. **${item.label}** — Index: ${item.index}, Reach: ${item.percentage}%\n`;
+    });
+    response += '\n';
+  }
+
+  // Generate visualizations
+  const visualizations = generateVisualizations(analysis, crosstab.name);
+
+  // Suggested actions for discovery
+  const suggestedActions: SuggestedAction[] = [
+    {
+      id: 'audience-profile',
+      label: 'Create Audience Profile',
+      description: 'Generate a detailed persona',
+      prompt: 'Create a detailed audience persona based on this data, including demographics, interests, and behaviors',
+      icon: 'target',
+      category: 'analysis',
+    },
+    {
+      id: 'marketing-strategy',
+      label: 'Marketing Strategy',
+      description: 'Get actionable recommendations',
+      prompt: 'Based on this analysis, what marketing strategy would you recommend?',
+      icon: 'target',
+      category: 'analysis',
+    },
+    {
+      id: 'targeting-opportunities',
+      label: 'Targeting Opportunities',
+      description: 'Find the best segments',
+      prompt: 'What are the best targeting opportunities based on this data?',
+      icon: 'filter',
+      category: 'drill-down',
+    },
+  ];
+
+  return { response, visualizations, suggestedActions };
+}
+
+/**
+ * Format audience-focused analysis (personas, segments, profiles)
+ */
+function formatAudienceAnalysis(
+  _message: string,
+  crosstab: any,
+  analysis: Analysis,
+  context: ReturnType<typeof buildCrosstabContext>,
+  _promptMetadata?: PromptMetadata
+): AnalysisResult {
+  let response = `## Audience Analysis: ${crosstab.name}\n\n`;
+
+  // Add context header
+  const contextParts: string[] = [];
+  if (context.markets.length > 0) {
+    contextParts.push(`**Markets:** ${context.markets.slice(0, 3).join(', ')}`);
+  }
+  if (context.audiences.length > 0) {
+    contextParts.push(`**Target Audience:** ${context.audiences.join(', ')}`);
+  }
+  if (contextParts.length > 0) {
+    response += contextParts.join(' | ') + '\n\n---\n\n';
+  }
+
+  // Audience profile
+  response += `### 👥 Audience Profile\n\n`;
+
+  // Demographics/attitudes from high-index items
+  const topBehaviors = analysis.statistics.topIndexes.slice(0, 15);
+  const categories = categorizeBehaviors(topBehaviors);
+
+  if (categories.lifestyle.length > 0) {
+    response += `**Lifestyle & Interests:**\n`;
+    categories.lifestyle.slice(0, 5).forEach(item => {
+      response += `- ${item.label} (Index: ${item.index})\n`;
+    });
+    response += '\n';
+  }
+
+  if (categories.media.length > 0) {
+    response += `**Media Consumption:**\n`;
+    categories.media.slice(0, 5).forEach(item => {
+      response += `- ${item.label} (Index: ${item.index})\n`;
+    });
+    response += '\n';
+  }
+
+  if (categories.shopping.length > 0) {
+    response += `**Shopping Behavior:**\n`;
+    categories.shopping.slice(0, 5).forEach(item => {
+      response += `- ${item.label} (Index: ${item.index})\n`;
+    });
+    response += '\n';
+  }
+
+  // Key differentiators
+  if (analysis.statistics.overIndexed.length > 0 && analysis.statistics.underIndexed.length > 0) {
+    response += `### 🎯 Key Differentiators\n\n`;
+    response += `**What sets this audience apart:**\n`;
+    analysis.statistics.overIndexed.slice(0, 5).forEach(item => {
+      response += `- ✅ ${item.label} (${item.index - 100}% above average)\n`;
+    });
+    response += '\n';
+    response += `**What they're less likely to do:**\n`;
+    analysis.statistics.underIndexed.slice(0, 3).forEach(item => {
+      response += `- ❌ ${item.label} (${100 - item.index}% below average)\n`;
+    });
+    response += '\n';
+  }
+
+  // Engagement recommendations
+  response += `### 💡 Engagement Recommendations\n\n`;
+  if (analysis.recommendations.length > 0) {
+    analysis.recommendations.slice(0, 3).forEach((rec, i) => {
+      response += `${i + 1}. **${rec.title}**: ${rec.description}\n`;
+    });
+  } else {
+    response += `Based on the audience profile, consider:\n`;
+    response += `- Targeting through their top media channels\n`;
+    response += `- Aligning messaging with their key interests\n`;
+    response += `- Avoiding messaging that doesn't resonate\n`;
+  }
+
+  const visualizations = generateVisualizations(analysis, crosstab.name);
+
+  const suggestedActions: SuggestedAction[] = [
+    {
+      id: 'social-strategy',
+      label: 'Social Media Strategy',
+      description: 'Platform-specific recommendations',
+      prompt: 'Which social media platforms should I prioritize for this audience and what content would resonate?',
+      icon: 'chart',
+      category: 'analysis',
+    },
+    {
+      id: 'content-themes',
+      label: 'Content Themes',
+      description: 'Topics that resonate',
+      prompt: 'What content themes and messaging would resonate most with this audience?',
+      icon: 'chart',
+      category: 'analysis',
+    },
+    {
+      id: 'campaign-ideas',
+      label: 'Campaign Ideas',
+      description: 'Creative concepts',
+      prompt: 'Based on this audience data, give me 3 creative campaign ideas that would resonate with them',
+      icon: 'target',
+      category: 'analysis',
+    },
+  ];
+
+  return { response, visualizations, suggestedActions };
+}
+
+/**
+ * Format strategy-focused analysis (marketing, targeting, campaigns)
+ */
+function formatStrategyAnalysis(
+  message: string,
+  crosstab: any,
+  analysis: Analysis,
+  context: ReturnType<typeof buildCrosstabContext>,
+  _promptMetadata?: PromptMetadata
+): AnalysisResult {
+  let response = `## Strategic Analysis: ${crosstab.name}\n\n`;
+
+  // Add context
+  const contextParts: string[] = [];
+  if (context.markets.length > 0) {
+    contextParts.push(`**Markets:** ${context.markets.slice(0, 3).join(', ')}`);
+  }
+  if (context.audiences.length > 0) {
+    contextParts.push(`**Audience:** ${context.audiences.join(', ')}`);
+  }
+  if (contextParts.length > 0) {
+    response += contextParts.join(' | ') + '\n\n---\n\n';
+  }
+
+  // Check what type of strategy is being asked
+  const lowerMessage = message.toLowerCase();
+  const isSocialMedia = /social|instagram|tiktok|facebook|twitter|youtube|platform/i.test(lowerMessage);
+  const isContent = /content|messaging|creative|theme/i.test(lowerMessage);
+  const isTargeting = /target|reach|segment|audience/i.test(lowerMessage);
+
+  // Categorize behaviors for better recommendations
+  const topBehaviors = analysis.statistics.topIndexes.slice(0, 20);
+  const categories = categorizeBehaviors(topBehaviors);
+
+  if (isSocialMedia) {
+    response += `### 📱 Social Media Strategy\n\n`;
+
+    if (categories.social.length > 0) {
+      response += `**Platform Prioritization (by Index):**\n\n`;
+      categories.social.slice(0, 6).forEach((item, i) => {
+        const priority = i < 2 ? '🥇 Primary' : i < 4 ? '🥈 Secondary' : '🥉 Tertiary';
+        response += `${priority}: **${item.label}** — Index: ${item.index}, Reach: ${item.percentage}%\n`;
+      });
+      response += '\n';
+    }
+
+    response += `**Recommended Approach:**\n`;
+    if (categories.social.some(s => /tiktok|reels|shorts/i.test(s.label))) {
+      response += `- Focus on short-form video content\n`;
+    }
+    if (categories.social.some(s => /instagram|pinterest/i.test(s.label))) {
+      response += `- Invest in visual storytelling\n`;
+    }
+    if (categories.social.some(s => /youtube|video/i.test(s.label))) {
+      response += `- Create longer-form educational/entertainment content\n`;
+    }
+    if (categories.social.some(s => /twitter|x\./i.test(s.label))) {
+      response += `- Engage in real-time conversations and trends\n`;
+    }
+    response += '\n';
+
+  } else if (isContent) {
+    response += `### 📝 Content Strategy\n\n`;
+
+    response += `**Content Themes That Resonate:**\n`;
+    if (categories.lifestyle.length > 0) {
+      response += `- **Lifestyle:** ${categories.lifestyle.slice(0, 3).map(i => i.label).join(', ')}\n`;
+    }
+    if (categories.media.length > 0) {
+      response += `- **Entertainment:** ${categories.media.slice(0, 3).map(i => i.label).join(', ')}\n`;
+    }
+    if (categories.shopping.length > 0) {
+      response += `- **Shopping/Products:** ${categories.shopping.slice(0, 3).map(i => i.label).join(', ')}\n`;
+    }
+    response += '\n';
+
+    response += `**Content Format Recommendations:**\n`;
+    response += `Based on the audience's media consumption patterns:\n`;
+    categories.media.slice(0, 5).forEach(item => {
+      response += `- Consider ${formatContentRecommendation(item.label)}\n`;
+    });
+    response += '\n';
+
+  } else if (isTargeting) {
+    response += `### 🎯 Targeting Strategy\n\n`;
+
+    response += `**High-Value Targeting Opportunities:**\n\n`;
+    response += `| Behavior | Index | Reach | Targeting Value |\n`;
+    response += `|----------|-------|-------|----------------|\n`;
+    analysis.statistics.topIndexes.slice(0, 10).forEach(item => {
+      const value = item.index > 150 && item.percentage > 20 ? '⭐ High' :
+                    item.index > 120 && item.percentage > 15 ? '✓ Medium' : '○ Niche';
+      response += `| ${truncateLabel(item.label, 30)} | ${item.index} | ${item.percentage}% | ${value} |\n`;
+    });
+    response += '\n';
+
+    response += `**Targeting Recommendations:**\n`;
+    const highValue = analysis.statistics.topIndexes.filter(i => i.index > 130 && i.percentage > 20);
+    if (highValue.length > 0) {
+      response += `- **Broad reach + affinity:** Target users interested in ${highValue.slice(0, 2).map(i => i.label).join(' or ')}\n`;
+    }
+    const niche = analysis.statistics.topIndexes.filter(i => i.index > 180);
+    if (niche.length > 0) {
+      response += `- **Precision targeting:** Use ${niche.slice(0, 2).map(i => i.label).join(' or ')} for highly targeted campaigns\n`;
+    }
+    response += '\n';
+
+  } else {
+    // General marketing strategy
+    response += `### 🚀 Marketing Strategy Overview\n\n`;
+
+    response += `**Key Audience Insights:**\n`;
+    response += `- ${analysis.statistics.overIndexed.length} behaviors with strong affinity (index > 110)\n`;
+    response += `- ${analysis.statistics.underIndexed.length} behaviors to avoid (index < 90)\n\n`;
+
+    response += `**Strategic Recommendations:**\n\n`;
+    if (analysis.recommendations.length > 0) {
+      analysis.recommendations.slice(0, 4).forEach((rec, i) => {
+        response += `${i + 1}. **${rec.title}** (${rec.priority} priority)\n`;
+        response += `   ${rec.description}\n\n`;
+      });
+    }
+
+    // Channel mix
+    response += `**Suggested Channel Mix:**\n`;
+    if (categories.social.length > 0) {
+      response += `- **Social:** ${categories.social.slice(0, 3).map(i => i.label).join(', ')}\n`;
+    }
+    if (categories.media.length > 0) {
+      response += `- **Media:** ${categories.media.slice(0, 3).map(i => i.label).join(', ')}\n`;
+    }
+  }
+
+  const visualizations = generateVisualizations(analysis, crosstab.name);
+
+  const suggestedActions: SuggestedAction[] = [
+    {
+      id: 'campaign-ideas',
+      label: 'Campaign Ideas',
+      description: 'Creative concepts',
+      prompt: 'Based on this audience data, give me 3 creative campaign ideas that would resonate with them',
+      icon: 'chart',
+      category: 'analysis',
+    },
+    {
+      id: 'audience-persona',
+      label: 'Audience Persona',
+      description: 'Detailed profile',
+      prompt: 'Create a detailed audience persona based on this data, including demographics, interests, and behaviors',
+      icon: 'target',
+      category: 'analysis',
+    },
+    {
+      id: 'key-differentiators',
+      label: 'Key Differentiators',
+      description: 'What makes them unique',
+      prompt: 'What are the key differentiators that make this audience unique compared to the general population?',
+      icon: 'compare',
+      category: 'drill-down',
+    },
+  ];
+
+  return { response, visualizations, suggestedActions };
+}
+
+/**
+ * Format trends-focused analysis
+ */
+function formatTrendsAnalysis(
+  _message: string,
+  crosstab: any,
+  analysis: Analysis,
+  context: ReturnType<typeof buildCrosstabContext>,
+  _promptMetadata?: PromptMetadata
+): AnalysisResult {
+  let response = `## Trends Analysis: ${crosstab.name}\n\n`;
+
+  // Add context
+  const contextParts: string[] = [];
+  if (context.markets.length > 0) {
+    contextParts.push(`**Markets:** ${context.markets.slice(0, 3).join(', ')}`);
+  }
+  if (context.waves.length > 0) {
+    contextParts.push(`**Period:** ${context.waves.join(', ')}`);
+  }
+  if (contextParts.length > 0) {
+    response += contextParts.join(' | ') + '\n\n---\n\n';
+  }
+
+  response += `### 📈 Behavioral Trends\n\n`;
+  response += `*Note: Trend analysis is most effective with multiple time periods. This analysis shows current state.*\n\n`;
+
+  // High-index behaviors (potential growth areas)
+  response += `**High Affinity Behaviors (Potential Growth Areas):**\n\n`;
+  analysis.statistics.overIndexed.slice(0, 8).forEach((item, i) => {
+    const strength = item.index > 150 ? '🔥 Strong' : item.index > 130 ? '📈 Growing' : '✓ Above avg';
+    response += `${i + 1}. **${item.label}** — ${strength} (Index: ${item.index})\n`;
+  });
+  response += '\n';
+
+  // Emerging vs established (by reach)
+  const emerging = analysis.statistics.topIndexes.filter(i => i.index > 140 && i.percentage < 30);
+  const established = analysis.statistics.topIndexes.filter(i => i.index > 110 && i.percentage > 40);
+
+  if (emerging.length > 0) {
+    response += `**🌱 Emerging Behaviors (High index, lower reach):**\n`;
+    emerging.slice(0, 5).forEach(item => {
+      response += `- ${item.label} — Index: ${item.index}, Reach: ${item.percentage}%\n`;
+    });
+    response += '\n';
+  }
+
+  if (established.length > 0) {
+    response += `**📊 Established Behaviors (High index, high reach):**\n`;
+    established.slice(0, 5).forEach(item => {
+      response += `- ${item.label} — Index: ${item.index}, Reach: ${item.percentage}%\n`;
+    });
+    response += '\n';
+  }
+
+  // Declining/avoid
+  if (analysis.statistics.underIndexed.length > 0) {
+    response += `**📉 Declining Interest (Under-indexed):**\n`;
+    analysis.statistics.underIndexed.slice(0, 5).forEach(item => {
+      response += `- ${item.label} — Index: ${item.index}\n`;
+    });
+    response += '\n';
+  }
+
+  const visualizations = generateVisualizations(analysis, crosstab.name);
+
+  const suggestedActions: SuggestedAction[] = [
+    {
+      id: 'marketing-strategy',
+      label: 'Marketing Strategy',
+      description: 'Act on these trends',
+      prompt: 'Based on these trends, what marketing strategy would you recommend?',
+      icon: 'target',
+      category: 'analysis',
+    },
+    {
+      id: 'high-reach',
+      label: 'High Reach Behaviors',
+      description: 'Broad campaign targeting',
+      prompt: 'What behaviors have high reach that I could use for broad campaigns?',
+      icon: 'chart',
+      category: 'drill-down',
+    },
+  ];
+
+  return { response, visualizations, suggestedActions };
+}
+
+/**
+ * Format markets-focused analysis
+ */
+function formatMarketsAnalysis(
+  _message: string,
+  crosstab: any,
+  analysis: Analysis,
+  context: ReturnType<typeof buildCrosstabContext>,
+  hasMultipleMarkets: boolean,
+  _promptMetadata?: PromptMetadata
+): AnalysisResult {
+  let response = `## Market Analysis: ${crosstab.name}\n\n`;
+
+  if (!hasMultipleMarkets) {
+    response += `*This crosstab contains data for a single market: ${context.markets[0] || 'Unknown'}*\n\n`;
+    response += `For cross-market comparison, create a crosstab with multiple countries in the GWI platform.\n\n`;
+  } else {
+    response += `**Markets included:** ${context.markets.join(', ')}\n\n---\n\n`;
+  }
+
+  response += `### 🌍 Key Behaviors Across Markets\n\n`;
+  response += `Top behaviors by index value:\n\n`;
+
+  analysis.statistics.topIndexes.slice(0, 12).forEach((item, i) => {
+    response += `${i + 1}. **${item.label}** — Index: ${item.index}, Reach: ${item.percentage}%\n`;
+  });
+  response += '\n';
+
+  // Recommendations
+  response += `### 💡 Market Strategy Recommendations\n\n`;
+  if (hasMultipleMarkets) {
+    response += `- **Global campaigns:** Focus on behaviors with consistent high indexes across markets\n`;
+    response += `- **Localized campaigns:** Adapt messaging for market-specific high-index behaviors\n`;
+    response += `- **Test markets:** Use markets with highest indexes as test markets for new concepts\n`;
+  } else {
+    response += `- Consider expanding analysis to compare with other key markets\n`;
+    response += `- Use these insights to benchmark against regional competitors\n`;
+  }
+
+  const visualizations = generateVisualizations(analysis, crosstab.name);
+
+  const suggestedActions: SuggestedAction[] = [
+    {
+      id: 'targeting-opportunities',
+      label: 'Targeting Opportunities',
+      description: 'Best segments per market',
+      prompt: 'What are the best targeting opportunities based on this data?',
+      icon: 'target',
+      category: 'drill-down',
+    },
+    {
+      id: 'marketing-strategy',
+      label: 'Marketing Strategy',
+      description: 'Cross-market recommendations',
+      prompt: 'Based on this analysis, what marketing strategy would you recommend?',
+      icon: 'target',
+      category: 'analysis',
+    },
+  ];
+
+  return { response, visualizations, suggestedActions };
+}
+
+/**
+ * Default analysis format (fallback)
+ */
+function formatDefaultAnalysis(
+  _message: string,
+  crosstab: any,
+  analysis: Analysis,
+  context: ReturnType<typeof buildCrosstabContext>,
+  includeChart: boolean,
+  hasMultipleMarkets: boolean
+): AnalysisResult {
+  let response = `## ${crosstab.name}\n\n`;
+
+  // Add context header
+  const contextParts: string[] = [];
+  if (context.markets.length > 0) {
+    contextParts.push(`**Markets:** ${context.markets.slice(0, 5).join(', ')}${context.markets.length > 5 ? ` +${context.markets.length - 5} more` : ''}`);
+  }
+  if (context.waves.length > 0) {
+    contextParts.push(`**Period:** ${context.waves.join(', ')}`);
+  }
+  if (context.audiences.length > 0) {
+    contextParts.push(`**Audience:** ${context.audiences.join(', ')}`);
+  }
+  if (contextParts.length > 0) {
+    response += contextParts.join(' | ') + '\n\n---\n\n';
+  }
+
+  // Use the formatter for full analysis
+  response += formatter.formatAnalysis(crosstab, analysis);
+
+  const visualizations = generateVisualizations(analysis, crosstab.name);
+  const suggestedActions = generateSuggestedActions(analysis, crosstab.name, hasMultipleMarkets);
+
+  // Remove "Show Chart" if already showing
+  const filteredActions = includeChart
+    ? suggestedActions.filter(a => a.id !== 'show-chart')
+    : suggestedActions;
+
+  return { response, visualizations, suggestedActions: filteredActions };
+}
+
+/**
+ * Handle Spark query with crosstab context
+ */
+async function handleSparkQueryWithCrosstabContext(
+  message: string,
+  crosstab: any,
+  analysis: Analysis
+): Promise<AnalysisResult> {
+  if (!sparkClient) {
+    return formatDefaultAnalysis(message, crosstab, analysis, buildCrosstabContext(crosstab), false, false);
+  }
+
+  try {
+    // Enhance the query with crosstab context
+    const contextualQuery = `Based on the crosstab "${crosstab.name}" which analyzes ${crosstab.bases?.[0]?.name || 'an audience'} in ${(crosstab.country_codes || []).join(', ')}: ${message}`;
+    const sparkResponse = await sparkClient.query(contextualQuery);
+    const response = formatSparkResponse(sparkResponse);
+
+    return {
+      response,
+      visualizations: generateVisualizations(analysis, crosstab.name),
+      suggestedActions: generateSuggestedActions(analysis, crosstab.name, (crosstab.country_codes?.length || 0) > 1),
+    };
+  } catch (error) {
+    console.error('Spark query error:', error);
+    return formatDefaultAnalysis(message, crosstab, analysis, buildCrosstabContext(crosstab), false, false);
+  }
+}
+
+/**
+ * Categorize behaviors into groups for better analysis
+ */
+function categorizeBehaviors(behaviors: IndexedItem[]): {
+  social: IndexedItem[];
+  media: IndexedItem[];
+  shopping: IndexedItem[];
+  lifestyle: IndexedItem[];
+  other: IndexedItem[];
+} {
+  const result = {
+    social: [] as IndexedItem[],
+    media: [] as IndexedItem[],
+    shopping: [] as IndexedItem[],
+    lifestyle: [] as IndexedItem[],
+    other: [] as IndexedItem[],
+  };
+
+  behaviors.forEach(item => {
+    const label = item.label.toLowerCase();
+
+    if (/instagram|tiktok|facebook|twitter|youtube|snapchat|linkedin|social|pinterest|whatsapp/i.test(label)) {
+      result.social.push(item);
+    } else if (/video|stream|podcast|music|gaming|news|tv|watch|movie|spotify|netflix/i.test(label)) {
+      result.media.push(item);
+    } else if (/shop|buy|purchase|brand|retail|amazon|online\s+shop/i.test(label)) {
+      result.shopping.push(item);
+    } else if (/travel|fitness|health|food|fashion|beauty|wellness|sport|hobby/i.test(label)) {
+      result.lifestyle.push(item);
+    } else {
+      result.other.push(item);
+    }
+  });
+
+  return result;
+}
+
+/**
+ * Format content recommendation based on media type
+ */
+function formatContentRecommendation(label: string): string {
+  const lower = label.toLowerCase();
+
+  if (/video|youtube|stream/i.test(lower)) return 'video content and tutorials';
+  if (/podcast/i.test(lower)) return 'podcast sponsorships or audio content';
+  if (/music|spotify/i.test(lower)) return 'audio branding and playlists';
+  if (/gaming/i.test(lower)) return 'gaming integrations and influencer partnerships';
+  if (/news/i.test(lower)) return 'news-style content and timely updates';
+  if (/tv/i.test(lower)) return 'longer-form video or TV-style content';
+
+  return 'content aligned with their media preferences';
+}
+
 // Handler: Chat message (intelligent routing)
 export async function handleChatMessage(req: Request, res: Response) {
   try {
-    const { message, crosstabId } = req.body;
+    const { message, crosstabId, promptMetadata } = req.body;
 
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
     }
+
+    console.log('=== handleChatMessage ===');
+    console.log('Message:', message.substring(0, 100));
+    console.log('CrosstabId:', crosstabId);
+    console.log('PromptMetadata:', promptMetadata ? JSON.stringify(promptMetadata) : 'none');
 
     let response = '';
     let analysisType = 'unknown';
@@ -528,8 +1248,8 @@ export async function handleChatMessage(req: Request, res: Response) {
     let visualizations: VisualizationData[] | null = null;
     let suggestedActions: SuggestedAction[] | null = null;
 
-    // Classify intent
-    const intent = classifyIntent(message, crosstabId);
+    // Classify intent - now uses promptMetadata for better routing
+    const intent = classifyIntent(message, crosstabId, promptMetadata);
     analysisType = intent.type;
 
     // Check if user wants a chart
@@ -540,6 +1260,16 @@ export async function handleChatMessage(req: Request, res: Response) {
     // If a crosstab is selected, handle crosstab-aware queries
     if (crosstabId) {
       switch (intent.type) {
+        case 'prompt_library': {
+          // Route to specialized handler based on prompt category
+          const result = await handlePromptLibraryQuery(message, crosstabId, promptMetadata, wantsChart);
+          response = result.response;
+          visualizations = result.visualizations || null;
+          suggestedActions = result.suggestedActions || null;
+          analysisType = `prompt_${promptMetadata?.promptCategory || 'unknown'}`;
+          break;
+        }
+
         case 'list_crosstabs': {
           const result = await handleListIntentWithData(intent.searchTerm);
           response = result.response;
@@ -652,13 +1382,24 @@ export async function handleChatMessage(req: Request, res: Response) {
 
 // Intent classification
 interface Intent {
-  type: 'list_crosstabs' | 'analyze_crosstab' | 'search_and_analyze' | 'compare_crosstabs' | 'spark_query' | 'help' | 'unknown';
+  type: 'list_crosstabs' | 'analyze_crosstab' | 'search_and_analyze' | 'compare_crosstabs' | 'spark_query' | 'help' | 'unknown' | 'prompt_library';
   searchTerm?: string;
   crosstabId?: string;
+  promptCategory?: PromptMetadata['promptCategory'];
 }
 
-function classifyIntent(message: string, crosstabId?: string | null): Intent {
+function classifyIntent(message: string, crosstabId?: string | null, promptMetadata?: PromptMetadata): Intent {
   const lower = message.toLowerCase();
+
+  // If we have prompt metadata from the library, use it for classification
+  if (promptMetadata) {
+    console.log(`Using prompt metadata for classification: ${promptMetadata.promptCategory} - ${promptMetadata.promptTitle}`);
+    return {
+      type: 'prompt_library',
+      promptCategory: promptMetadata.promptCategory,
+      crosstabId: crosstabId || undefined,
+    };
+  }
 
   // Check for UUID pattern (crosstab ID) in the message
   const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;

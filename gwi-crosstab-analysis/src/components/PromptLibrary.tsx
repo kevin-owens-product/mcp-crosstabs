@@ -1,6 +1,7 @@
 import { useState } from 'react';
+import type { PromptMetadata } from '@/lib/types';
 
-interface PromptCategory {
+export interface PromptCategory {
   id: string;
   name: string;
   icon: string;
@@ -8,11 +9,20 @@ interface PromptCategory {
   prompts: Prompt[];
 }
 
-interface Prompt {
+export interface Prompt {
   id: string;
   title: string;
   prompt: string;
   description: string;
+}
+
+// Helper to create prompt metadata from a prompt and its category
+export function createPromptMetadata(prompt: Prompt, categoryId: string): PromptMetadata {
+  return {
+    promptId: prompt.id,
+    promptTitle: prompt.title,
+    promptCategory: categoryId as PromptMetadata['promptCategory'],
+  };
 }
 
 const promptCategories: PromptCategory[] = [
@@ -337,7 +347,7 @@ const iconMap: { [key: string]: JSX.Element } = {
 interface PromptLibraryProps {
   isOpen: boolean;
   onClose: () => void;
-  onSelectPrompt: (prompt: string) => void;
+  onSelectPrompt: (prompt: string, metadata?: PromptMetadata) => void;
 }
 
 const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, onSelectPrompt }) => {
@@ -354,7 +364,7 @@ const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, onSelect
           p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
           p.prompt.toLowerCase().includes(searchQuery.toLowerCase()) ||
           p.description.toLowerCase().includes(searchQuery.toLowerCase())
-        ).map(p => ({ ...p, category: cat.name }))
+        ).map(p => ({ ...p, category: cat.name, categoryId: cat.id }))
       )
     : null;
 
@@ -432,7 +442,7 @@ const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, onSelect
                     <button
                       key={prompt.id}
                       onClick={() => {
-                        onSelectPrompt(prompt.prompt);
+                        onSelectPrompt(prompt.prompt, createPromptMetadata(prompt, prompt.categoryId));
                         onClose();
                       }}
                       className="text-left p-4 bg-slate-50 dark:bg-slate-700/50 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl border border-slate-200 dark:border-slate-600 hover:border-primary-300 dark:hover:border-primary-600 transition-all group"
@@ -465,7 +475,7 @@ const PromptLibrary: React.FC<PromptLibraryProps> = ({ isOpen, onClose, onSelect
                     <button
                       key={prompt.id}
                       onClick={() => {
-                        onSelectPrompt(prompt.prompt);
+                        onSelectPrompt(prompt.prompt, createPromptMetadata(prompt, currentCategory.id));
                         onClose();
                       }}
                       className="text-left p-4 bg-slate-50 dark:bg-slate-700/50 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-xl border border-slate-200 dark:border-slate-600 hover:border-primary-300 dark:hover:border-primary-600 transition-all group"

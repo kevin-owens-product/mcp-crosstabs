@@ -3,6 +3,7 @@ import Header from './components/Header';
 import ChatInterface, { ChatInterfaceHandle } from './components/ChatInterface';
 import CrosstabList from './components/CrosstabList';
 import PromptLibrary from './components/PromptLibrary';
+import type { PromptMetadata } from './lib/types';
 import './index.css';
 
 function App() {
@@ -34,8 +35,8 @@ function App() {
     setSelectedCrosstab(null);
   };
 
-  const handleSelectPrompt = (prompt: string) => {
-    chatRef.current?.sendPrompt(prompt);
+  const handleSelectPrompt = (prompt: string, metadata?: PromptMetadata) => {
+    chatRef.current?.sendPrompt(prompt, metadata);
   };
 
   const handleToggleDarkMode = () => {
