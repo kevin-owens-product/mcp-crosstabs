@@ -1726,6 +1726,29 @@ async function handleListIntentWithData(searchTerm?: string, offset: number = 0,
 
   // Add suggested action to show more if there are more crosstabs
   const suggestedActions: SuggestedAction[] = [];
+
+  // Add guidance actions on first page
+  if (offset === 0) {
+    suggestedActions.push({
+      id: 'search-crosstabs',
+      label: 'Search Crosstabs',
+      description: 'Find a specific crosstab by name',
+      prompt: 'Search for crosstabs about ',
+      icon: 'filter',
+      category: 'analysis',
+    });
+
+    suggestedActions.push({
+      id: 'gwi-data-query',
+      label: 'Ask GWI Data Question',
+      description: 'Query GWI data directly without a crosstab',
+      prompt: 'What percentage of Gen Z use TikTok daily?',
+      icon: 'chart',
+      category: 'analysis',
+    });
+  }
+
+  // Pagination: Show more
   if (hasMore) {
     suggestedActions.push({
       id: 'show-more-crosstabs',
