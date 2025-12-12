@@ -1,12 +1,18 @@
 import ReactMarkdown from 'react-markdown';
 import type { ChatMessage } from '@/lib/types';
+import { IndexBarChart, SuggestedActions } from './visualizations';
 
 interface MessageBubbleProps {
   message: ChatMessage;
   onSelectCrosstab?: (id: string) => void;
+  onSendMessage?: (message: string) => void;
 }
 
-const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onSelectCrosstab }) => {
+const MessageBubble: React.FC<MessageBubbleProps> = ({
+  message,
+  onSelectCrosstab,
+  onSendMessage,
+}) => {
   const isUser = message.role === 'user';
 
   // Debug logging
@@ -14,6 +20,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onSelectCrosstab
     console.log('MessageBubble - message:', message);
     console.log('MessageBubble - crosstabs:', message.crosstabs);
     console.log('MessageBubble - crosstabs length:', message.crosstabs?.length || 0);
+    console.log('MessageBubble - visualizations:', message.visualizations?.length || 0);
+    console.log('MessageBubble - suggestedActions:', message.suggestedActions?.length || 0);
   }
 
   return (
@@ -54,6 +62,15 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onSelectCrosstab
                 {message.content}
               </ReactMarkdown>
 
+              {/* Render visualizations if available */}
+              {message.visualizations && message.visualizations.length > 0 && (
+                <div className="mt-4">
+                  {message.visualizations.map((viz) => (
+                    <IndexBarChart key={viz.id} visualization={viz} />
+                  ))}
+                </div>
+              )}
+
               {/* Render clickable crosstab buttons if available */}
               {message.crosstabs && message.crosstabs.length > 0 && (
                 <div className="mt-4 space-y-2">
@@ -81,6 +98,14 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onSelectCrosstab
                     ))}
                   </div>
                 </div>
+              )}
+
+              {/* Render suggested actions if available */}
+              {message.suggestedActions && message.suggestedActions.length > 0 && onSendMessage && (
+                <SuggestedActions
+                  actions={message.suggestedActions}
+                  onActionClick={onSendMessage}
+                />
               )}
             </>
           )}

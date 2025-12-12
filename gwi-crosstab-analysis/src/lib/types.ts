@@ -136,6 +136,8 @@ export interface ChatMessage {
   crosstabId?: string;
   analysisType?: string;
   crosstabs?: Array<{ id: string; name: string }>;
+  visualizations?: VisualizationData[];
+  suggestedActions?: SuggestedAction[];
 }
 
 export interface ChatSession {
@@ -145,10 +147,51 @@ export interface ChatSession {
   updatedAt: Date;
 }
 
+// ============================================================================
+// VISUALIZATION TYPES
+// ============================================================================
+
 export interface VisualizationSpec {
   type: 'heatmap' | 'bar' | 'line' | 'table';
   title: string;
   data: unknown;
+}
+
+export interface BarChartDataPoint {
+  label: string;
+  value: number;
+  percentage?: number;
+  sample?: number;
+  color?: string;
+}
+
+export interface VisualizationData {
+  id: string;
+  type: 'bar' | 'horizontalBar' | 'line' | 'heatmap' | 'table';
+  title: string;
+  subtitle?: string;
+  data: BarChartDataPoint[];
+  config?: {
+    xAxisLabel?: string;
+    yAxisLabel?: string;
+    referenceValue?: number;  // e.g., 100 for index baseline
+    showPercentage?: boolean;
+    maxItems?: number;
+    colorScheme?: 'blue' | 'green' | 'red' | 'gradient';
+  };
+}
+
+// ============================================================================
+// SUGGESTED ACTIONS TYPES
+// ============================================================================
+
+export interface SuggestedAction {
+  id: string;
+  label: string;
+  description?: string;
+  prompt: string;  // The message to send when clicked
+  icon?: 'chart' | 'target' | 'compare' | 'export' | 'filter' | 'trend';
+  category?: 'analysis' | 'visualization' | 'export' | 'drill-down';
 }
 
 export interface AnalysisTemplate {

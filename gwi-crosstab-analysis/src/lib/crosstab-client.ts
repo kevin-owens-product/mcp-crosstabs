@@ -183,6 +183,12 @@ export class GWICrosstabClient {
       has_base: !!requestBody.base_audience
     }));
 
+    // Store rows and columns for index-to-ID mapping
+    const rowsArray = config.rows || [];
+    const columnsArray = config.columns || [];
+    console.log('Row definitions for mapping:', rowsArray.slice(0, 3).map((r: any) => ({ id: r.id, name: r.name })));
+    console.log('Column definitions for mapping:', columnsArray.slice(0, 3).map((c: any) => ({ id: c.id, name: c.name })));
+
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -212,11 +218,34 @@ export class GWICrosstabClient {
     for (const line of lines) {
       try {
         const row = JSON.parse(line);
+
+        // Map row_index and column_index back to actual IDs from config
+        // The Bulk Query API returns indices that correspond to the order of rows/columns in the request
+        let datapointId: string;
+        let audienceId: string;
+
+        // Priority: use row.id if available, otherwise map index to config ID
+        if (row.row?.id) {
+          datapointId = row.row.id;
+        } else if (typeof row.row_index === 'number' && rowsArray[row.row_index]) {
+          datapointId = rowsArray[row.row_index].id;
+        } else {
+          datapointId = row.row_index?.toString() || '';
+        }
+
+        if (row.column?.id) {
+          audienceId = row.column.id;
+        } else if (typeof row.column_index === 'number' && columnsArray[row.column_index]) {
+          audienceId = columnsArray[row.column_index].id;
+        } else {
+          audienceId = row.column_index?.toString() || '';
+        }
+
         // Transform the response to match our CrosstabDataRow format
         data.push({
-          datapoint: row.row?.id || row.row_index?.toString() || '',
-          audience: row.column?.id || row.column_index?.toString() || '',
-          segment: row.column?.name,
+          datapoint: datapointId,
+          audience: audienceId,
+          segment: row.column?.name || (typeof row.column_index === 'number' && columnsArray[row.column_index] ? columnsArray[row.column_index].name : undefined),
           wave: row.wave,
           metrics: {
             positive_sample: row.intersect?.sample || 0,
@@ -234,6 +263,10 @@ export class GWICrosstabClient {
     console.log(`Parsed ${data.length} data rows from Bulk Query`);
     if (data.length > 0) {
       console.log('First data row:', JSON.stringify(data[0], null, 2));
+      // Show if ID mapping worked
+      const firstRow = data[0];
+      console.log(`First row datapoint ID: "${firstRow.datapoint}" (mapped from config: ${rowsArray[0]?.id})`);
+      console.log(`First row audience ID: "${firstRow.audience}" (mapped from config: ${columnsArray[0]?.id})`);
     }
 
     return data;

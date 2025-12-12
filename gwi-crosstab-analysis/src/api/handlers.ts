@@ -4,6 +4,7 @@ import { TemplateAnalysisEngine } from '../lib/analysis-templates';
 import { CrosstabAnalyzer } from '../lib/crosstab-analyzer';
 import { ResponseFormatter } from '../lib/response-formatter';
 import { SparkAPIClient, shouldUseSparkAPI, formatSparkResponse } from '../lib/spark-client';
+import type { Analysis, VisualizationData, SuggestedAction, IndexedItem } from '../lib/types';
 
 // Initialize services
 const API_KEY = process.env.GWI_API_KEY;
@@ -43,6 +44,158 @@ function getFromCache(key: string) {
 
 function setCache(key: string, data: unknown) {
   cache.set(key, { data, timestamp: Date.now() });
+}
+
+// ============================================================================
+// VISUALIZATION & SUGGESTED ACTIONS GENERATORS
+// ============================================================================
+
+/**
+ * Generate visualization data from analysis results
+ */
+function generateVisualizations(analysis: Analysis, crosstabName: string): VisualizationData[] {
+  const visualizations: VisualizationData[] = [];
+
+  // Over-indexed behaviors bar chart
+  if (analysis.statistics.overIndexed.length > 0) {
+    visualizations.push({
+      id: 'over-indexed-chart',
+      type: 'horizontalBar',
+      title: 'Top Over-Indexed Behaviors',
+      subtitle: `Behaviors where ${crosstabName} audience over-indexes vs. average`,
+      data: analysis.statistics.overIndexed.slice(0, 10).map((item: IndexedItem) => ({
+        label: truncateLabel(item.label, 35),
+        value: item.index,
+        percentage: item.percentage,
+        sample: item.sample,
+      })),
+      config: {
+        xAxisLabel: 'Index',
+        yAxisLabel: 'Behavior',
+        referenceValue: 100,
+        maxItems: 10,
+        colorScheme: 'blue',
+      },
+    });
+  }
+
+  // Under-indexed behaviors bar chart (if significant)
+  if (analysis.statistics.underIndexed.length >= 5) {
+    visualizations.push({
+      id: 'under-indexed-chart',
+      type: 'horizontalBar',
+      title: 'Notable Under-Indexed Behaviors',
+      subtitle: 'Behaviors where this audience under-indexes vs. average',
+      data: analysis.statistics.underIndexed.slice(0, 8).map((item: IndexedItem) => ({
+        label: truncateLabel(item.label, 35),
+        value: item.index,
+        percentage: item.percentage,
+        sample: item.sample,
+      })),
+      config: {
+        xAxisLabel: 'Index',
+        yAxisLabel: 'Behavior',
+        referenceValue: 100,
+        maxItems: 8,
+        colorScheme: 'red',
+      },
+    });
+  }
+
+  return visualizations;
+}
+
+/**
+ * Truncate long labels for display
+ */
+function truncateLabel(label: string, maxLength: number): string {
+  if (label.length <= maxLength) return label;
+  return label.substring(0, maxLength - 3) + '...';
+}
+
+/**
+ * Generate context-aware suggested actions based on analysis results
+ */
+function generateSuggestedActions(
+  analysis: Analysis,
+  _crosstabName: string,
+  hasMultipleMarkets: boolean
+): SuggestedAction[] {
+  const actions: SuggestedAction[] = [];
+
+  // Always offer marketing strategy if there are over-indexed items
+  if (analysis.statistics.overIndexed.length > 0) {
+    actions.push({
+      id: 'marketing-strategy',
+      label: 'Marketing Strategy',
+      description: 'Get actionable marketing recommendations based on this data',
+      prompt: 'Based on this analysis, what marketing strategy would you recommend?',
+      icon: 'target',
+      category: 'analysis',
+    });
+  }
+
+  // Offer targeting opportunities if there are significant indexes
+  if (analysis.statistics.topIndexes.length > 0) {
+    actions.push({
+      id: 'targeting-opportunities',
+      label: 'Targeting Opportunities',
+      description: 'Identify the best segments to target',
+      prompt: 'What are the best targeting opportunities based on this data?',
+      icon: 'target',
+      category: 'drill-down',
+    });
+  }
+
+  // Offer market comparison if multiple markets
+  if (hasMultipleMarkets) {
+    actions.push({
+      id: 'compare-markets',
+      label: 'Compare Markets',
+      description: 'See how behaviors differ across markets',
+      prompt: 'How do the key behaviors compare across different markets?',
+      icon: 'compare',
+      category: 'analysis',
+    });
+  }
+
+  // Offer high-reach behaviors analysis
+  const highReachInsight = analysis.insights.find(i => i.type === 'HIGH_REACH');
+  if (highReachInsight) {
+    actions.push({
+      id: 'high-reach',
+      label: 'High Reach Behaviors',
+      description: 'Find behaviors with both high reach and good indexing',
+      prompt: 'What behaviors have high reach that I could use for broad campaigns?',
+      icon: 'chart',
+      category: 'drill-down',
+    });
+  }
+
+  // Offer niche targeting if available
+  const nicheInsight = analysis.insights.find(i => i.type === 'NICHE_TARGETING');
+  if (nicheInsight) {
+    actions.push({
+      id: 'niche-targeting',
+      label: 'Niche Segments',
+      description: 'High-index, lower-reach segments for precision targeting',
+      prompt: 'What niche targeting opportunities exist in this data?',
+      icon: 'filter',
+      category: 'drill-down',
+    });
+  }
+
+  // Always offer to show a chart if not already showing one
+  actions.push({
+    id: 'show-chart',
+    label: 'Show Chart',
+    description: 'Visualize the top behaviors',
+    prompt: 'Show me a chart of the top over-indexed behaviors',
+    icon: 'chart',
+    category: 'visualization',
+  });
+
+  return actions;
 }
 
 // Handler: List all crosstabs
@@ -184,6 +337,13 @@ export async function analyzeCrosstab(req: Request, res: Response) {
   }
 }
 
+// Extended result type for analysis handlers
+interface AnalysisResult {
+  response: string;
+  visualizations?: VisualizationData[];
+  suggestedActions?: SuggestedAction[];
+}
+
 // Handler: Chat message (intelligent routing)
 export async function handleChatMessage(req: Request, res: Response) {
   try {
@@ -196,10 +356,17 @@ export async function handleChatMessage(req: Request, res: Response) {
     let response = '';
     let analysisType = 'unknown';
     let crosstabsList: Array<{ id: string; name: string }> | null = null;
+    let visualizations: VisualizationData[] | null = null;
+    let suggestedActions: SuggestedAction[] | null = null;
 
     // Classify intent
     const intent = classifyIntent(message, crosstabId);
     analysisType = intent.type;
+
+    // Check if user wants a chart
+    const wantsChart = message.toLowerCase().includes('chart') ||
+                       message.toLowerCase().includes('graph') ||
+                       message.toLowerCase().includes('visualiz');
 
     // If a crosstab is selected, handle crosstab-aware queries
     if (crosstabId) {
@@ -211,24 +378,26 @@ export async function handleChatMessage(req: Request, res: Response) {
           break;
         }
 
-        case 'analyze_crosstab':
-          response = await handleAnalyzeIntent(crosstabId);
+        case 'analyze_crosstab': {
+          const result = await handleAnalyzeIntent(crosstabId, wantsChart);
+          response = result.response;
+          visualizations = result.visualizations || null;
+          suggestedActions = result.suggestedActions || null;
           break;
+        }
 
         case 'help':
           response = getHelpResponse();
           break;
 
-        default:
-          // For any other query with a selected crosstab, use Spark with crosstab context
-          if (sparkClient) {
-            response = await handleCrosstabAwareSparkQuery(message, crosstabId);
-            analysisType = 'crosstab_spark_query';
-          } else {
-            // Fallback to local analysis
-            response = await handleAnalyzeIntent(crosstabId);
-            analysisType = 'analyze_crosstab';
-          }
+        default: {
+          // For any other query with a selected crosstab, use crosstab context
+          const result = await handleCrosstabAwareSparkQuery(message, crosstabId, wantsChart);
+          response = result.response;
+          visualizations = result.visualizations || null;
+          suggestedActions = result.suggestedActions || null;
+          analysisType = 'crosstab_query';
+        }
       }
     } else {
       // No crosstab selected - route based on intent
@@ -240,9 +409,13 @@ export async function handleChatMessage(req: Request, res: Response) {
           break;
         }
 
-        case 'analyze_crosstab':
-          response = await handleAnalyzeIntent(intent.crosstabId!);
+        case 'analyze_crosstab': {
+          const result = await handleAnalyzeIntent(intent.crosstabId!, wantsChart);
+          response = result.response;
+          visualizations = result.visualizations || null;
+          suggestedActions = result.suggestedActions || null;
           break;
+        }
 
         case 'search_and_analyze':
           response = await handleSearchAndAnalyzeIntent(intent.searchTerm!);
@@ -269,13 +442,16 @@ export async function handleChatMessage(req: Request, res: Response) {
 
     // Debug logging
     console.log('Chat response - crosstabsList:', JSON.stringify(crosstabsList, null, 2));
-    console.log('Chat response - crosstabsList length:', crosstabsList?.length || 0);
+    console.log('Chat response - visualizations:', visualizations?.length || 0);
+    console.log('Chat response - suggestedActions:', suggestedActions?.length || 0);
 
     res.json({
       response,
       analysisType,
       crosstabId: crosstabId || null,
       crosstabs: crosstabsList,
+      visualizations,
+      suggestedActions,
       timestamp: new Date().toISOString(),
     });
   } catch (error: unknown) {
@@ -370,28 +546,26 @@ async function handleSparkQuery(message: string): Promise<string> {
   }
 }
 
-// Crosstab-aware Spark query handler
-async function handleCrosstabAwareSparkQuery(message: string, crosstabId: string): Promise<string> {
-  if (!sparkClient) {
-    return 'The Spark AI feature is not configured. Please add the GWI_MCP_KEY environment variable.';
+// Crosstab-aware query handler - uses local analyzer with actual crosstab data
+async function handleCrosstabAwareSparkQuery(message: string, crosstabId: string, includeChart: boolean = false): Promise<AnalysisResult> {
+  if (!orchestrator) {
+    return { response: 'The crosstab feature is not configured. Please add the GWI_API_KEY environment variable.' };
   }
 
-  if (!orchestrator) {
-    return 'The crosstab feature is not configured. Please add the GWI_API_KEY environment variable.';
-  }
+  console.log(`handleCrosstabAwareSparkQuery called with crosstabId: ${crosstabId}, message: "${message}"`);
 
   try {
-    // Fetch crosstab metadata (without full data for speed)
+    // Fetch crosstab WITH full data for accurate analysis
     let crosstab;
     try {
-      crosstab = await orchestrator.client.getCrosstab(crosstabId, false);
+      crosstab = await orchestrator.client.getCrosstab(crosstabId, true);
+      console.log(`Fetched crosstab "${crosstab.name}" with ${crosstab.data?.length || 0} data points`);
     } catch (error) {
-      console.error('Failed to fetch crosstab for context:', error);
-      // Fall back to basic Spark query
-      return handleSparkQuery(message);
+      console.error('Failed to fetch crosstab:', error);
+      return { response: `Failed to fetch crosstab data: ${error instanceof Error ? error.message : 'Unknown error'}` };
     }
 
-    // Build rich context from crosstab
+    // Build context for response header
     const context = {
       name: crosstab.name,
       markets: crosstab.country_codes || [],
@@ -399,61 +573,113 @@ async function handleCrosstabAwareSparkQuery(message: string, crosstabId: string
       audience: crosstab.bases?.[0]?.name,
     };
 
-    // Build a contextual prompt that references the crosstab
-    const contextualPrompt = buildCrosstabContextPrompt(message, crosstab);
+    // Build response header
+    let response = `## ${crosstab.name}\n\n`;
 
-    console.log('Crosstab-aware Spark query:', contextualPrompt);
+    const contextParts: string[] = [];
+    if (context.markets.length > 0) {
+      contextParts.push(`**Markets:** ${context.markets.slice(0, 5).join(', ')}${context.markets.length > 5 ? ` +${context.markets.length - 5} more` : ''}`);
+    }
+    if (context.waves.length > 0) {
+      contextParts.push(`**Period:** ${context.waves.join(', ')}`);
+    }
+    if (context.audience) {
+      contextParts.push(`**Audience:** ${context.audience}`);
+    }
+    if (contextParts.length > 0) {
+      response += contextParts.join(' | ') + '\n\n---\n\n';
+    }
 
-    // Query Spark with context
-    const sparkResponse = await sparkClient.queryWithContext(contextualPrompt, context);
+    // Analyze the question type to provide relevant insights
+    const lowerMessage = message.toLowerCase();
+    const isMarketingQuestion = lowerMessage.includes('marketing') || lowerMessage.includes('strategy') || lowerMessage.includes('campaign');
+    const isTargetingQuestion = lowerMessage.includes('target') || lowerMessage.includes('reach') || lowerMessage.includes('audience');
 
-    // Format response with crosstab reference
-    let response = formatSparkResponse(sparkResponse);
+    let visualizations: VisualizationData[] = [];
+    let suggestedActions: SuggestedAction[] = [];
 
-    // Add crosstab context header
-    const contextHeader = `**Analyzing: ${crosstab.name}**\n` +
-      (context.markets.length > 0 ? `Markets: ${context.markets.join(', ')}\n` : '') +
-      (context.waves.length > 0 ? `Time Period: ${context.waves.join(', ')}\n` : '') +
-      (context.audience ? `Audience: ${context.audience}\n` : '') +
-      '\n---\n\n';
+    // Use local analyzer if we have data
+    if (crosstab.data && crosstab.data.length > 0) {
+      console.log(`Using local analyzer for question: "${message}"`);
 
-    return contextHeader + response;
+      try {
+        const analysis = analyzer.analyze(crosstab);
+
+        if (isMarketingQuestion) {
+          // Focus on actionable marketing insights
+          response += `### Marketing Strategy Insights\n\n`;
+          response += `Based on the analysis of **${crosstab.name}**, here are key insights for your marketing strategy:\n\n`;
+
+          // Top affinities for targeting
+          if (analysis.statistics.overIndexed.length > 0) {
+            response += `#### Top Audience Affinities (High Index = Strong Fit)\n\n`;
+            analysis.statistics.overIndexed.slice(0, 10).forEach((item, i) => {
+              response += `${i + 1}. **${item.label}** - Index: ${item.index}, Reach: ${item.percentage}%\n`;
+            });
+            response += '\n';
+          }
+
+          // Recommendations
+          if (analysis.recommendations.length > 0) {
+            response += `#### Strategic Recommendations\n\n`;
+            analysis.recommendations.forEach((rec, i) => {
+              response += `${i + 1}. **${rec.title}** (${rec.priority} priority)\n   ${rec.description}\n\n`;
+            });
+          }
+
+          // Key insights
+          const highInsights = analysis.insights.filter(i => i.significance === 'high');
+          if (highInsights.length > 0) {
+            response += `#### Key Findings\n\n`;
+            highInsights.slice(0, 5).forEach(insight => {
+              response += `- **${insight.title}**: ${insight.description}\n`;
+            });
+          }
+        } else if (isTargetingQuestion) {
+          // Focus on targeting opportunities
+          response += `### Targeting Opportunities\n\n`;
+
+          if (analysis.statistics.overIndexed.length > 0) {
+            response += `#### High-Index Behaviors (Best for Targeting)\n\n`;
+            analysis.statistics.overIndexed.slice(0, 15).forEach((item, i) => {
+              response += `${i + 1}. **${item.label}**\n   - Index: ${item.index} | Reach: ${item.percentage}% | Sample: ${item.sample}\n`;
+            });
+          }
+        } else {
+          // General analysis
+          response += formatter.formatAnalysis(crosstab, analysis);
+        }
+
+        // Generate visualizations
+        visualizations = generateVisualizations(analysis, crosstab.name);
+
+        // Generate suggested actions
+        const hasMultipleMarkets = (crosstab.country_codes?.length || 0) > 1;
+        suggestedActions = generateSuggestedActions(analysis, crosstab.name, hasMultipleMarkets);
+
+        // Remove "Show Chart" if already showing or if user asked for one
+        if (includeChart) {
+          suggestedActions = suggestedActions.filter(a => a.id !== 'show-chart');
+        }
+
+        return {
+          response,
+          visualizations: visualizations.length > 0 ? visualizations : undefined,
+          suggestedActions: suggestedActions.length > 0 ? suggestedActions : undefined,
+        };
+      } catch (analysisError) {
+        console.error('Local analysis failed:', analysisError);
+        response += `*Analysis error: ${analysisError instanceof Error ? analysisError.message : 'Unknown error'}*\n`;
+      }
+    } else {
+      response += '*No data available for this crosstab. The crosstab configuration was loaded but no data points were returned.*\n';
+    }
+
+    return { response };
   } catch (error) {
-    console.error('Crosstab-aware Spark query error:', error);
-    return `I encountered an error analyzing the crosstab: ${error instanceof Error ? error.message : 'Unknown error'}. Please try rephrasing your question.`;
+    console.error('Crosstab-aware query error:', error);
+    return { response: `I encountered an error analyzing the crosstab: ${error instanceof Error ? error.message : 'Unknown error'}. Please try rephrasing your question.` };
   }
-}
-
-// Build a contextual prompt that includes crosstab information
-function buildCrosstabContextPrompt(userMessage: string, crosstab: any): string {
-  const parts: string[] = [];
-
-  // Add crosstab context
-  parts.push(`I'm analyzing a crosstab called "${crosstab.name}".`);
-
-  if (crosstab.country_codes && crosstab.country_codes.length > 0) {
-    parts.push(`This data covers: ${crosstab.country_codes.join(', ')}.`);
-  }
-
-  if (crosstab.wave_codes && crosstab.wave_codes.length > 0) {
-    parts.push(`Time period: ${crosstab.wave_codes.join(', ')}.`);
-  }
-
-  if (crosstab.bases && crosstab.bases.length > 0) {
-    const audienceNames = crosstab.bases.map((b: any) => b.name).join(', ');
-    parts.push(`Target audience: ${audienceNames}.`);
-  }
-
-  if (crosstab.rows && crosstab.rows.length > 0) {
-    const rowNames = crosstab.rows.slice(0, 5).map((r: any) => r.name).join(', ');
-    parts.push(`Analyzing: ${rowNames}${crosstab.rows.length > 5 ? '...' : ''}.`);
-  }
-
-  // Add user's question
-  parts.push('');
-  parts.push(`Question: ${userMessage}`);
-
-  return parts.join(' ');
 }
 
 // Intent handlers
@@ -511,13 +737,13 @@ async function handleListIntentWithData(searchTerm?: string): Promise<{
 }
 
 
-async function handleAnalyzeIntent(crosstabId: string): Promise<string> {
+async function handleAnalyzeIntent(crosstabId: string, includeChart: boolean = false): Promise<AnalysisResult> {
   if (!orchestrator) {
-    return 'The crosstab feature is not configured. Please add the GWI_API_KEY environment variable.';
+    return { response: 'The crosstab feature is not configured. Please add the GWI_API_KEY environment variable.' };
   }
 
   if (!crosstabId) {
-    return 'Please select a crosstab from the sidebar or specify which one you want to analyze.';
+    return { response: 'Please select a crosstab from the sidebar or specify which one you want to analyze.' };
   }
 
   console.log(`Attempting to fetch crosstab: ${crosstabId}`);
@@ -529,33 +755,23 @@ async function handleAnalyzeIntent(crosstabId: string): Promise<string> {
     console.log(`Fetched crosstab with ${crosstab.data?.length || 0} data points`);
   } catch (error) {
     console.error(`Failed to fetch crosstab ${crosstabId}:`, error);
-    return `Failed to fetch crosstab with ID: ${crosstabId}\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}\n\nPlease check:\n- The crosstab ID is correct\n- Your API key has access to this crosstab`;
+    return { response: `Failed to fetch crosstab with ID: ${crosstabId}\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}\n\nPlease check:\n- The crosstab ID is correct\n- Your API key has access to this crosstab` };
   }
 
   if (!crosstab) {
-    return `Crosstab not found with ID: ${crosstabId}`;
+    return { response: `Crosstab not found with ID: ${crosstabId}` };
   }
 
-  // Use Spark/MCP API for analysis with crosstab context
-  if (sparkClient) {
-    return await analyzeWithSpark(crosstab);
-  }
-
-  // Fallback: Return crosstab structure summary if Spark not available
-  return formatCrosstabSummary(crosstab);
+  // Use local analyzer for analysis with visualizations
+  return await analyzeWithLocalAnalyzer(crosstab, includeChart);
 }
 
-// Analyze crosstab using full data from Platform API
-async function analyzeWithSpark(crosstab: any): Promise<string> {
-  console.log('=== analyzeWithSpark called ===');
-  console.log('Crosstab keys:', Object.keys(crosstab));
-  console.log('Has data property:', 'data' in crosstab);
-  console.log('Data is array:', Array.isArray(crosstab.data));
+// Analyze crosstab using local analyzer with visualizations and suggested actions
+async function analyzeWithLocalAnalyzer(crosstab: any, includeChart: boolean = false): Promise<AnalysisResult> {
+  console.log('=== analyzeWithLocalAnalyzer called ===');
+  console.log('Crosstab name:', crosstab.name);
   console.log('Data length:', crosstab.data?.length || 0);
-
-  if (crosstab.data && crosstab.data.length > 0) {
-    console.log('First data row sample:', JSON.stringify(crosstab.data[0], null, 2).substring(0, 500));
-  }
+  console.log('Include chart:', includeChart);
 
   const context = buildCrosstabContext(crosstab);
 
@@ -579,6 +795,9 @@ async function analyzeWithSpark(crosstab: any): Promise<string> {
     result += contextParts.join(' | ') + '\n\n---\n\n';
   }
 
+  let visualizations: VisualizationData[] = [];
+  let suggestedActions: SuggestedAction[] = [];
+
   // Check if we have actual crosstab data to analyze
   if (crosstab.data && crosstab.data.length > 0) {
     console.log(`*** USING LOCAL ANALYZER with ${crosstab.data.length} data points ***`);
@@ -590,105 +809,68 @@ async function analyzeWithSpark(crosstab: any): Promise<string> {
       console.log('Analysis insights count:', analysis.insights?.length || 0);
       console.log('Analysis top indexes count:', analysis.statistics?.topIndexes?.length || 0);
 
-      // Format the full analysis
-      result += formatter.formatAnalysis(crosstab, analysis);
+      // Format the full analysis (but shorter if we're showing charts)
+      if (includeChart) {
+        // Abbreviated text response when showing charts
+        result += `### Summary\n\n`;
+        result += `Analyzed **${crosstab.data.length}** data points.\n\n`;
 
-      // Apply specialized templates for additional insights
-      const templateResults = templateEngine.analyzeWithTemplates(crosstab, analysis);
+        if (analysis.statistics.overIndexed.length > 0) {
+          result += `Found **${analysis.statistics.overIndexed.length}** over-indexed behaviors and **${analysis.statistics.underIndexed.length}** under-indexed behaviors.\n\n`;
+        }
 
-      if (Object.keys(templateResults).length > 0) {
-        result += '\n---\n\n## Specialized Analyses\n\n';
-        Object.entries(templateResults).forEach(([name, templateAnalysis]) => {
-          result += templateEngine.formatTemplateAnalysis(name, templateAnalysis);
-          result += '\n';
-        });
-      }
+        // Show top 5 in text as well
+        if (analysis.statistics.topIndexes.length > 0) {
+          result += `#### Top 5 Over-Indexed Behaviors\n\n`;
+          analysis.statistics.topIndexes.slice(0, 5).forEach((item, i) => {
+            result += `${i + 1}. **${item.label}** - Index: ${item.index}\n`;
+          });
+        }
+      } else {
+        // Full text analysis
+        result += formatter.formatAnalysis(crosstab, analysis);
 
-      console.log('*** LOCAL ANALYSIS RESULT LENGTH:', result.length);
-      return result;
-    } catch (error) {
-      console.error('*** LOCAL ANALYSIS ERROR ***:', error);
-      console.error('Error stack:', error instanceof Error ? error.stack : 'N/A');
-      // Fall back to Spark API if local analysis fails
-    }
-  } else {
-    console.log('*** NO DATA - FALLING BACK TO SPARK API ***');
-  }
+        // Apply specialized templates for additional insights
+        const templateResults = templateEngine.analyzeWithTemplates(crosstab, analysis);
 
-  // Use MCP endpoint for analysis
-  if (sparkClient) {
-    console.log('=== USING MCP ENDPOINT FOR ANALYSIS ===');
-
-    // Build a rich context-aware prompt from the crosstab definition
-    const marketStr = context.markets.length > 0 ? context.markets.slice(0, 5).join(', ') : 'global markets';
-    const audienceStr = context.audiences.length > 0 ? context.audiences.join(' and ') : 'general internet users';
-    const rowTopics = context.rows.length > 0 ? context.rows.slice(0, 10).join(', ') : '';
-    const columnTopics = context.columns.length > 0 ? context.columns.slice(0, 10).join(', ') : '';
-    const waveStr = context.waves.length > 0 ? context.waves.join(', ') : 'latest available data';
-
-    // Build a comprehensive prompt that asks for detailed analysis
-    let prompt = `Analyze consumer insights for the following crosstab:\n\n`;
-    prompt += `**Crosstab Name:** ${crosstab.name}\n`;
-    prompt += `**Markets:** ${marketStr}\n`;
-    prompt += `**Time Period:** ${waveStr}\n`;
-    prompt += `**Target Audience:** ${audienceStr}\n`;
-
-    if (rowTopics) {
-      prompt += `**Row Variables (Topics):** ${rowTopics}\n`;
-    }
-    if (columnTopics) {
-      prompt += `**Column Variables (Segments):** ${columnTopics}\n`;
-    }
-
-    prompt += `\nProvide a comprehensive analysis including:\n`;
-    prompt += `1. Key over-indexed behaviors (what this audience does more than average)\n`;
-    prompt += `2. Key under-indexed behaviors (what this audience does less than average)\n`;
-    prompt += `3. Demographic insights\n`;
-    prompt += `4. Actionable marketing recommendations\n`;
-    prompt += `5. Notable trends or patterns\n\n`;
-    prompt += `Include specific percentages and index values where available.`;
-
-    console.log('MCP prompt:', prompt);
-
-    try {
-      const response = await sparkClient.query(prompt);
-      console.log('MCP response received, insights count:', response.insights?.length || 0);
-      result += response.formattedText;
-
-      // If we got insights, also try to explore the top ones for more detail
-      if (response.insights && response.insights.length > 0) {
-        const topInsights = response.insights
-          .filter(i => i.significance === 'high')
-          .slice(0, 3);
-
-        if (topInsights.length > 0) {
-          result += '\n\n## Detailed Insight Analysis\n\n';
-          for (const insight of topInsights) {
-            try {
-              console.log(`Exploring insight: ${insight.id}`);
-              const detail = await sparkClient.exploreInsight(insight.id);
-              if (detail.metrics && detail.metrics.length > 0) {
-                result += `### ${insight.content.substring(0, 100)}...\n`;
-                detail.metrics.forEach(m => {
-                  result += `- ${m.name}: ${m.percentage}% (Index: ${m.index})\n`;
-                });
-                result += '\n';
-              }
-            } catch (exploreError) {
-              console.warn(`Failed to explore insight ${insight.id}:`, exploreError);
-            }
-          }
+        if (Object.keys(templateResults).length > 0) {
+          result += '\n---\n\n## Specialized Analyses\n\n';
+          Object.entries(templateResults).forEach(([name, templateAnalysis]) => {
+            result += templateEngine.formatTemplateAnalysis(name, templateAnalysis);
+            result += '\n';
+          });
         }
       }
 
-      return result;
+      // Generate visualizations (always if there's data)
+      visualizations = generateVisualizations(analysis, crosstab.name);
+
+      // Generate suggested actions
+      const hasMultipleMarkets = (crosstab.country_codes?.length || 0) > 1;
+      suggestedActions = generateSuggestedActions(analysis, crosstab.name, hasMultipleMarkets);
+
+      // Remove the "Show Chart" action if we're already showing a chart
+      if (includeChart) {
+        suggestedActions = suggestedActions.filter(a => a.id !== 'show-chart');
+      }
+
+      console.log('*** Generated', visualizations.length, 'visualizations and', suggestedActions.length, 'suggested actions ***');
+
+      return {
+        response: result,
+        visualizations: visualizations.length > 0 ? visualizations : undefined,
+        suggestedActions: suggestedActions.length > 0 ? suggestedActions : undefined,
+      };
     } catch (error) {
-      console.error('MCP API error:', error);
-      return result + `\n*MCP analysis unavailable: ${error instanceof Error ? error.message : 'Unknown error'}*`;
+      console.error('*** LOCAL ANALYSIS ERROR ***:', error);
+      console.error('Error stack:', error instanceof Error ? error.stack : 'N/A');
+      result += `\n*Analysis error: ${error instanceof Error ? error.message : 'Unknown error'}*`;
     }
+  } else {
+    result += '*No data available for this crosstab. The crosstab configuration was loaded but no data points were returned.*\n';
   }
 
-  return result + '\n*No analysis API configured. Please ensure GWI_MCP_KEY is set.*';
+  return { response: result };
 }
 
 // Build context object from crosstab definition
@@ -706,47 +888,6 @@ function buildCrosstabContext(crosstab: any): {
   const columns = (crosstab.columns || []).map((c: any) => c.name || c.full_name).filter(Boolean);
 
   return { markets, waves, audiences, rows, columns };
-}
-
-// Format crosstab summary when Spark is not available
-function formatCrosstabSummary(crosstab: any): string {
-  const context = buildCrosstabContext(crosstab);
-
-  let summary = `## ${crosstab.name}\n\n`;
-
-  if (context.markets.length > 0) {
-    summary += `**Markets:** ${context.markets.join(', ')}\n`;
-  }
-
-  if (context.waves.length > 0) {
-    summary += `**Time Period:** ${context.waves.join(', ')}\n`;
-  }
-
-  if (context.audiences.length > 0) {
-    summary += `\n### Audiences\n`;
-    context.audiences.forEach(a => summary += `- ${a}\n`);
-  }
-
-  if (context.rows.length > 0) {
-    summary += `\n### Row Variables\n`;
-    context.rows.slice(0, 10).forEach(r => summary += `- ${r}\n`);
-    if (context.rows.length > 10) {
-      summary += `- ... and ${context.rows.length - 10} more\n`;
-    }
-  }
-
-  if (context.columns.length > 0) {
-    summary += `\n### Column Variables\n`;
-    context.columns.slice(0, 10).forEach(c => summary += `- ${c}\n`);
-    if (context.columns.length > 10) {
-      summary += `- ... and ${context.columns.length - 10} more\n`;
-    }
-  }
-
-  summary += '\n---\n';
-  summary += '\n*Note: For detailed insights, please ensure the GWI_MCP_KEY is configured.*';
-
-  return summary;
 }
 
 async function handleSearchAndAnalyzeIntent(searchTerm: string): Promise<string> {
@@ -775,7 +916,8 @@ async function handleSearchAndAnalyzeIntent(searchTerm: string): Promise<string>
   }
 
   // Single result - analyze it
-  return await handleAnalyzeIntent(results[0].id);
+  const result = await handleAnalyzeIntent(results[0].id);
+  return result.response;
 }
 
 async function handleCompareIntent(): Promise<string> {
