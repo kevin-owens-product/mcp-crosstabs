@@ -103,36 +103,140 @@ export class GWICrosstabClient {
     crosstabId: string,
     includeData: boolean = true
   ): Promise<Crosstab> {
-    // Explicitly set include_data parameter
-    const url = `${this.baseUrl}/v2/saved/crosstabs/${crosstabId}?include_data=${includeData}`;
+    // First, fetch the crosstab configuration
+    const configUrl = `${this.baseUrl}/v2/saved/crosstabs/${crosstabId}`;
+    console.log(`Fetching crosstab config: ${configUrl}`);
 
-    console.log(`Fetching crosstab: ${url}`);
-    console.log(`includeData parameter: ${includeData}`);
-
-    const response = await fetch(url, {
+    const configResponse = await fetch(configUrl, {
       headers: {
         'Authorization': this.apiKey,
         'Accept': 'application/json'
       }
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`Get crosstab API error (${response.status}):`, errorText);
-      throw new Error(`Failed to get crosstab: ${response.status} ${response.statusText} - ${errorText.substring(0, 200)}`);
+    if (!configResponse.ok) {
+      const errorText = await configResponse.text();
+      console.error(`Get crosstab config API error (${configResponse.status}):`, errorText);
+      throw new Error(`Failed to get crosstab: ${configResponse.status} ${configResponse.statusText} - ${errorText.substring(0, 200)}`);
     }
 
+    const config = await configResponse.json();
+    console.log('Crosstab config keys:', Object.keys(config));
+    console.log('Crosstab name:', config.name);
+    console.log('Rows count:', config.rows?.length || 0);
+    console.log('Columns count:', config.columns?.length || 0);
+
+    // If we don't need data, just return the config
     if (!includeData) {
-      const data = await response.json();
-      // Normalize uuid to id
       return {
-        ...data,
-        id: data.uuid || data.id,
+        ...config,
+        id: config.uuid || config.id,
+        data: []
       };
     }
 
-    // Parse JSON Lines response for full data
-    return await this.parseJSONLinesResponse(response);
+    // Fetch actual data using the Bulk Query endpoint
+    console.log('=== FETCHING CROSSTAB DATA VIA BULK QUERY ===');
+    try {
+      const data = await this.queryCrosstabData(config);
+      console.log(`Fetched ${data.length} data rows`);
+
+      return {
+        ...config,
+        id: config.uuid || config.id,
+        data
+      };
+    } catch (error) {
+      console.error('Failed to fetch crosstab data:', error);
+      // Return config without data if query fails
+      return {
+        ...config,
+        id: config.uuid || config.id,
+        data: []
+      };
+    }
+  }
+
+  /**
+   * Query actual crosstab data using the Bulk Query endpoint
+   * POST /v2/query/crosstab
+   * Docs: https://api.globalwebindex.com/docs/platform-api/reference/query/v2-crosstab-bulk-query
+   */
+  private async queryCrosstabData(config: any): Promise<CrosstabDataRow[]> {
+    const url = `${this.baseUrl}/v2/query/crosstab`;
+
+    // Build the request body from the crosstab config
+    const requestBody = {
+      rows: config.rows || [],
+      columns: config.columns || [],
+      locations: config.country_codes || [],
+      waves: config.wave_codes || [],
+      base_audience: config.bases?.[0] || null
+    };
+
+    console.log('Bulk Query URL:', url);
+    console.log('Bulk Query request:', JSON.stringify({
+      rows_count: requestBody.rows.length,
+      columns_count: requestBody.columns.length,
+      locations: requestBody.locations,
+      waves: requestBody.waves,
+      has_base: !!requestBody.base_audience
+    }));
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': this.apiKey,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json-seq'
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    console.log('Bulk Query response status:', response.status);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`Bulk Query API error (${response.status}):`, errorText);
+      throw new Error(`Failed to query crosstab data: ${response.status} - ${errorText.substring(0, 500)}`);
+    }
+
+    // Parse JSON-seq response (stream of JSON objects)
+    const text = await response.text();
+    console.log('Bulk Query response length:', text.length);
+    console.log('Bulk Query response (first 1000 chars):', text.substring(0, 1000));
+
+    const data: CrosstabDataRow[] = [];
+    const lines = text.split('\n').filter(l => l.trim());
+
+    for (const line of lines) {
+      try {
+        const row = JSON.parse(line);
+        // Transform the response to match our CrosstabDataRow format
+        data.push({
+          datapoint: row.row?.id || row.row_index?.toString() || '',
+          audience: row.column?.id || row.column_index?.toString() || '',
+          segment: row.column?.name,
+          wave: row.wave,
+          metrics: {
+            positive_sample: row.intersect?.sample || 0,
+            positive_size: row.intersect?.size || 0,
+            audience_percentage: row.intersect?.percentage || 0,
+            datapoint_percentage: row.audiences?.row?.percentage || 0,
+            audience_index: row.intersect?.index || 100
+          }
+        });
+      } catch (e) {
+        console.warn('Failed to parse data row:', line.substring(0, 100), e);
+      }
+    }
+
+    console.log(`Parsed ${data.length} data rows from Bulk Query`);
+    if (data.length > 0) {
+      console.log('First data row:', JSON.stringify(data[0], null, 2));
+    }
+
+    return data;
   }
 
   /**
@@ -147,75 +251,4 @@ export class GWICrosstabClient {
     );
   }
 
-  /**
-   * Parse JSON Lines format response
-   * The API can return either:
-   * 1. JSON Lines format (multiple JSON objects separated by newlines)
-   * 2. Single JSON object with data array embedded (under various keys)
-   */
-  private async parseJSONLinesResponse(response: Response): Promise<Crosstab> {
-    const text = await response.text();
-    console.log('=== PARSING CROSSTAB RESPONSE ===');
-    console.log('Crosstab response length:', text.length);
-    console.log('Crosstab response (first 2000 chars):', text.substring(0, 2000));
-
-    const lines = text.split('\n').filter(l => l.trim());
-    console.log('Number of response lines:', lines.length);
-
-    if (lines.length === 0) {
-      throw new Error('Empty response from API');
-    }
-
-    // First line contains configuration
-    const config = JSON.parse(lines[0]);
-    console.log('Config keys:', Object.keys(config));
-
-    // Check for embedded data under various possible keys
-    const possibleDataKeys = ['data', 'results', 'values', 'rows_data', 'crosstab_data'];
-    for (const key of possibleDataKeys) {
-      if (config[key] && Array.isArray(config[key])) {
-        console.log(`Found embedded data array under "${key}" with ${config[key].length} items`);
-        return {
-          ...config,
-          id: config.uuid || config.id,
-          data: config[key], // Normalize to 'data' property
-        };
-      }
-    }
-
-    // Check if lines 2+ contain data (JSON Lines format)
-    if (lines.length > 1) {
-      const data: CrosstabDataRow[] = [];
-      for (let i = 1; i < lines.length; i++) {
-        try {
-          const row = JSON.parse(lines[i]);
-          data.push(row);
-        } catch (e) {
-          console.warn(`Failed to parse data row ${i}:`, lines[i].substring(0, 100), e);
-        }
-      }
-
-      console.log(`Parsed ${data.length} data rows from JSON Lines format`);
-
-      if (data.length > 0) {
-        console.log('First data row sample:', JSON.stringify(data[0], null, 2).substring(0, 500));
-      }
-
-      return {
-        ...config,
-        id: config.uuid || config.id,
-        data
-      };
-    }
-
-    // No data found - return config only
-    console.log('*** WARNING: No data found in response ***');
-    console.log('Full config object:', JSON.stringify(config, null, 2).substring(0, 3000));
-
-    return {
-      ...config,
-      id: config.uuid || config.id,
-      data: []
-    };
-  }
 }
