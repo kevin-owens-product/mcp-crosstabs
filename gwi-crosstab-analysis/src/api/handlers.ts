@@ -56,14 +56,20 @@ function setCache(key: string, data: unknown) {
 function generateVisualizations(analysis: Analysis, crosstabName: string): VisualizationData[] {
   const visualizations: VisualizationData[] = [];
 
-  // Over-indexed behaviors bar chart
-  if (analysis.statistics.overIndexed.length > 0) {
+  // Always show top indexed behaviors chart if we have data
+  // Use topIndexes which contains top items sorted by index (always populated)
+  if (analysis.statistics.topIndexes.length > 0) {
+    // Determine chart title based on whether items are over-indexed
+    const hasOverIndexed = analysis.statistics.overIndexed.length > 0;
+
     visualizations.push({
-      id: 'over-indexed-chart',
+      id: 'top-indexed-chart',
       type: 'horizontalBar',
-      title: 'Top Over-Indexed Behaviors',
-      subtitle: `Behaviors where ${crosstabName} audience over-indexes vs. average`,
-      data: analysis.statistics.overIndexed.slice(0, 10).map((item: IndexedItem) => ({
+      title: hasOverIndexed ? 'Top Over-Indexed Behaviors' : 'Top Behaviors by Index',
+      subtitle: hasOverIndexed
+        ? `Behaviors where ${crosstabName} audience over-indexes vs. average`
+        : `Top behaviors sorted by index value (100 = average)`,
+      data: analysis.statistics.topIndexes.slice(0, 10).map((item: IndexedItem) => ({
         label: truncateLabel(item.label, 35),
         value: item.index,
         percentage: item.percentage,
