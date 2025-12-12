@@ -124,13 +124,29 @@ function truncateLabel(label: string, maxLength: number): string {
  */
 function generateSuggestedActions(
   analysis: Analysis,
-  _crosstabName: string,
+  crosstabName: string,
   hasMultipleMarkets: boolean
 ): SuggestedAction[] {
   const actions: SuggestedAction[] = [];
 
-  // Always offer marketing strategy if there are over-indexed items
-  if (analysis.statistics.overIndexed.length > 0) {
+  // Analyze the data to determine what actions are most relevant
+  const hasOverIndexed = analysis.statistics.overIndexed.length > 0;
+  const hasUnderIndexed = analysis.statistics.underIndexed.length > 0;
+  const hasTopIndexes = analysis.statistics.topIndexes.length > 0;
+  const hasRecommendations = analysis.recommendations.length > 0;
+  const hasInsights = analysis.insights.length > 0;
+
+  // Check for specific content types in the data
+  const topLabels = analysis.statistics.topIndexes.map(i => i.label.toLowerCase()).join(' ');
+  const hasSocialMedia = /instagram|tiktok|facebook|twitter|youtube|snapchat|linkedin|social/i.test(topLabels);
+  const hasMediaContent = /video|stream|podcast|music|gaming|news|tv|watch/i.test(topLabels);
+  const hasShopping = /shop|buy|purchase|brand|retail|ecommerce|amazon/i.test(topLabels);
+  const hasLifestyle = /travel|fitness|health|food|fashion|beauty|wellness/i.test(topLabels);
+
+  // === PRIMARY ACTIONS (always show if applicable) ===
+
+  // Marketing strategy - if there are actionable insights
+  if (hasOverIndexed || hasRecommendations) {
     actions.push({
       id: 'marketing-strategy',
       label: 'Marketing Strategy',
@@ -141,8 +157,8 @@ function generateSuggestedActions(
     });
   }
 
-  // Offer targeting opportunities if there are significant indexes
-  if (analysis.statistics.topIndexes.length > 0) {
+  // Targeting opportunities - if there are significant indexes
+  if (hasTopIndexes) {
     actions.push({
       id: 'targeting-opportunities',
       label: 'Targeting Opportunities',
@@ -153,7 +169,9 @@ function generateSuggestedActions(
     });
   }
 
-  // Offer market comparison if multiple markets
+  // === COMPARATIVE ACTIONS ===
+
+  // Market comparison if multiple markets
   if (hasMultipleMarkets) {
     actions.push({
       id: 'compare-markets',
@@ -165,7 +183,71 @@ function generateSuggestedActions(
     });
   }
 
-  // Offer high-reach behaviors analysis
+  // Key differentiators - what makes this audience unique
+  if (hasOverIndexed && hasUnderIndexed) {
+    actions.push({
+      id: 'key-differentiators',
+      label: 'Key Differentiators',
+      description: 'Understand what makes this audience unique',
+      prompt: 'What are the key differentiators that make this audience unique compared to the general population?',
+      icon: 'compare',
+      category: 'analysis',
+    });
+  }
+
+  // === CONTENT & CHANNEL SPECIFIC ACTIONS ===
+
+  // Social media strategy
+  if (hasSocialMedia) {
+    actions.push({
+      id: 'social-strategy',
+      label: 'Social Media Strategy',
+      description: 'Get platform-specific recommendations',
+      prompt: 'Which social media platforms should I prioritize for this audience and what content would resonate?',
+      icon: 'chart',
+      category: 'analysis',
+    });
+  }
+
+  // Content recommendations
+  if (hasMediaContent) {
+    actions.push({
+      id: 'content-strategy',
+      label: 'Content Strategy',
+      description: 'Get content format and theme recommendations',
+      prompt: 'What content formats and themes would work best for this audience?',
+      icon: 'chart',
+      category: 'analysis',
+    });
+  }
+
+  // Shopping/purchase behavior insights
+  if (hasShopping) {
+    actions.push({
+      id: 'purchase-insights',
+      label: 'Purchase Behavior',
+      description: 'Understand shopping habits and preferences',
+      prompt: 'What are the key purchase behaviors and brand preferences for this audience?',
+      icon: 'trend',
+      category: 'drill-down',
+    });
+  }
+
+  // Lifestyle insights
+  if (hasLifestyle) {
+    actions.push({
+      id: 'lifestyle-insights',
+      label: 'Lifestyle Profile',
+      description: 'Explore lifestyle and interests in depth',
+      prompt: 'Give me a detailed lifestyle profile of this audience including their interests and values',
+      icon: 'filter',
+      category: 'drill-down',
+    });
+  }
+
+  // === INSIGHT-BASED ACTIONS ===
+
+  // High-reach behaviors analysis
   const highReachInsight = analysis.insights.find(i => i.type === 'HIGH_REACH');
   if (highReachInsight) {
     actions.push({
@@ -178,7 +260,7 @@ function generateSuggestedActions(
     });
   }
 
-  // Offer niche targeting if available
+  // Niche targeting if available
   const nicheInsight = analysis.insights.find(i => i.type === 'NICHE_TARGETING');
   if (nicheInsight) {
     actions.push({
@@ -191,7 +273,47 @@ function generateSuggestedActions(
     });
   }
 
-  // Always offer to show a chart if not already showing one
+  // === EXPLORATORY ACTIONS ===
+
+  // Under-indexed behaviors - what they don't do
+  if (hasUnderIndexed && analysis.statistics.underIndexed.length >= 3) {
+    actions.push({
+      id: 'avoid-behaviors',
+      label: 'What to Avoid',
+      description: 'Behaviors this audience under-indexes on',
+      prompt: 'What behaviors does this audience under-index on? What should I avoid in my campaigns?',
+      icon: 'filter',
+      category: 'drill-down',
+    });
+  }
+
+  // Audience persona/profile summary
+  if (hasInsights) {
+    actions.push({
+      id: 'audience-persona',
+      label: 'Audience Persona',
+      description: 'Get a narrative profile of this audience',
+      prompt: 'Create a detailed audience persona based on this data, including demographics, interests, and behaviors',
+      icon: 'target',
+      category: 'analysis',
+    });
+  }
+
+  // Campaign ideas
+  if (hasOverIndexed) {
+    actions.push({
+      id: 'campaign-ideas',
+      label: 'Campaign Ideas',
+      description: 'Get creative campaign concepts',
+      prompt: 'Based on this audience data, give me 3 creative campaign ideas that would resonate with them',
+      icon: 'chart',
+      category: 'analysis',
+    });
+  }
+
+  // === VISUALIZATION ACTIONS ===
+
+  // Show chart - always offer if not already showing one
   actions.push({
     id: 'show-chart',
     label: 'Show Chart',
@@ -200,6 +322,45 @@ function generateSuggestedActions(
     icon: 'chart',
     category: 'visualization',
   });
+
+  // === EXPORT/UTILITY ACTIONS ===
+
+  // Export summary
+  if (hasTopIndexes) {
+    actions.push({
+      id: 'export-summary',
+      label: 'Summary Report',
+      description: 'Get a formatted summary for sharing',
+      prompt: `Create a brief executive summary of the key findings from ${crosstabName} that I can share with my team`,
+      icon: 'export',
+      category: 'export',
+    });
+  }
+
+  // Limit to reasonable number of actions (prioritize by category)
+  const maxActions = 6;
+  if (actions.length > maxActions) {
+    // Prioritize: keep at least one from each category, then fill with analysis/drill-down
+    const byCategory = {
+      analysis: actions.filter(a => a.category === 'analysis'),
+      'drill-down': actions.filter(a => a.category === 'drill-down'),
+      visualization: actions.filter(a => a.category === 'visualization'),
+      export: actions.filter(a => a.category === 'export'),
+    };
+
+    const prioritized: SuggestedAction[] = [];
+
+    // Take top 2 analysis actions
+    prioritized.push(...byCategory.analysis.slice(0, 2));
+    // Take top 2 drill-down actions
+    prioritized.push(...byCategory['drill-down'].slice(0, 2));
+    // Take 1 visualization
+    prioritized.push(...byCategory.visualization.slice(0, 1));
+    // Take 1 export
+    prioritized.push(...byCategory.export.slice(0, 1));
+
+    return prioritized.slice(0, maxActions);
+  }
 
   return actions;
 }
