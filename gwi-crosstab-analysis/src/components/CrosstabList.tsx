@@ -9,11 +9,8 @@ interface CrosstabListProps {
 // Extract UUID from URL or return as-is if already a UUID
 function extractCrosstabId(input: string): string | null {
   const trimmed = input.trim();
-
-  // UUID pattern
   const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
   const match = trimmed.match(uuidPattern);
-
   return match ? match[0] : null;
 }
 
@@ -68,7 +65,6 @@ const CrosstabList: React.FC<CrosstabListProps> = ({ onSelectCrosstab, selectedI
       return;
     }
 
-    // Check if already exists
     const allCrosstabs = [...crosstabs, ...manualCrosstabs];
     if (allCrosstabs.some(ct => ct.id === id)) {
       setAddError('This crosstab is already in your list');
@@ -79,7 +75,6 @@ const CrosstabList: React.FC<CrosstabListProps> = ({ onSelectCrosstab, selectedI
     setAddError(null);
 
     try {
-      // Try to fetch crosstab info
       const response = await fetch(`/api/crosstabs/${id}?includeData=false`);
 
       if (!response.ok) {
@@ -101,7 +96,6 @@ const CrosstabList: React.FC<CrosstabListProps> = ({ onSelectCrosstab, selectedI
       setNewCrosstabInput('');
       setShowAddForm(false);
     } catch (error) {
-      // Even if fetch fails, add it with a placeholder name
       const newCrosstab: CrosstabSummary = {
         id: id,
         uuid: id,
@@ -134,19 +128,26 @@ const CrosstabList: React.FC<CrosstabListProps> = ({ onSelectCrosstab, selectedI
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="p-4 space-y-3">
-        <input
-          type="text"
-          placeholder="Search crosstabs..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gwi-blue text-sm"
-        />
+      <div className="p-3 space-y-2">
+        {/* Search input */}
+        <div className="relative">
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            type="text"
+            placeholder="Search..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-9 pr-3 py-2 bg-slate-100 dark:bg-slate-700 border-none rounded-lg text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-all"
+          />
+        </div>
 
+        {/* Add crosstab button/form */}
         {!showAddForm ? (
           <button
             onClick={() => setShowAddForm(true)}
-            className="w-full px-3 py-2 text-sm text-gwi-blue border border-gwi-blue rounded-lg hover:bg-blue-50 transition-colors flex items-center justify-center gap-2"
+            className="w-full px-3 py-2 text-sm font-medium text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-900/30 border border-primary-200 dark:border-primary-800 rounded-lg hover:bg-primary-100 dark:hover:bg-primary-900/50 transition-colors flex items-center justify-center gap-2"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -154,7 +155,7 @@ const CrosstabList: React.FC<CrosstabListProps> = ({ onSelectCrosstab, selectedI
             Add Crosstab
           </button>
         ) : (
-          <div className="space-y-2 p-3 bg-gray-50 rounded-lg">
+          <div className="space-y-2 p-3 bg-slate-100 dark:bg-slate-700 rounded-lg">
             <input
               type="text"
               placeholder="Paste crosstab URL or ID..."
@@ -163,17 +164,17 @@ const CrosstabList: React.FC<CrosstabListProps> = ({ onSelectCrosstab, selectedI
                 setNewCrosstabInput(e.target.value);
                 setAddError(null);
               }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gwi-blue text-sm"
+              className="w-full px-3 py-2 bg-white dark:bg-slate-600 border border-slate-200 dark:border-slate-500 rounded-lg text-sm text-slate-700 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500"
               autoFocus
             />
             {addError && (
-              <p className="text-xs text-red-500">{addError}</p>
+              <p className="text-xs text-red-500 dark:text-red-400">{addError}</p>
             )}
             <div className="flex gap-2">
               <button
                 onClick={handleAddCrosstab}
                 disabled={addingCrosstab || !newCrosstabInput.trim()}
-                className="flex-1 px-3 py-1.5 text-sm bg-gwi-blue text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="flex-1 px-3 py-1.5 text-sm font-medium bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {addingCrosstab ? 'Adding...' : 'Add'}
               </button>
@@ -183,7 +184,7 @@ const CrosstabList: React.FC<CrosstabListProps> = ({ onSelectCrosstab, selectedI
                   setNewCrosstabInput('');
                   setAddError(null);
                 }}
-                className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 transition-colors"
+                className="px-3 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:text-slate-800 dark:hover:text-slate-100 transition-colors"
               >
                 Cancel
               </button>
@@ -192,50 +193,87 @@ const CrosstabList: React.FC<CrosstabListProps> = ({ onSelectCrosstab, selectedI
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 pb-4">
+      {/* Crosstab list */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar px-3 pb-3">
         {loading ? (
-          <div className="text-center text-gray-500 py-8">Loading...</div>
+          <div className="flex items-center justify-center py-8">
+            <div className="flex gap-1">
+              <div className="typing-dot"></div>
+              <div className="typing-dot"></div>
+              <div className="typing-dot"></div>
+            </div>
+          </div>
         ) : filteredCrosstabs.length === 0 ? (
-          <div className="text-center text-gray-500 py-8 text-sm">
-            {searchQuery ? 'No matches found' : 'No crosstabs yet. Add one above!'}
+          <div className="text-center py-8">
+            <svg className="w-10 h-10 text-slate-300 dark:text-slate-600 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              {searchQuery ? 'No matches found' : 'No crosstabs yet'}
+            </p>
+            {!searchQuery && (
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
+                Add one above to get started
+              </p>
+            )}
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-1">
             {filteredCrosstabs.map(ct => {
               const isManual = manualCrosstabs.some(m => m.id === ct.id);
+              const isSelected = ct.id === selectedId;
 
               return (
                 <div
                   key={ct.id}
-                  className={`relative group rounded-lg transition-colors ${
-                    ct.id === selectedId
-                      ? 'bg-gwi-blue text-white'
-                      : 'bg-gray-50 hover:bg-gray-100'
+                  className={`relative group rounded-xl transition-all ${
+                    isSelected
+                      ? 'bg-primary-600 text-white shadow-soft'
+                      : 'bg-slate-50 dark:bg-slate-700/50 hover:bg-slate-100 dark:hover:bg-slate-700'
                   }`}
                 >
                   <button
-                    onClick={() => onSelectCrosstab(ct.id === selectedId ? null : ct.id)}
+                    onClick={() => onSelectCrosstab(isSelected ? null : ct.id)}
                     className="w-full text-left p-3"
                   >
-                    <div className="font-medium text-sm line-clamp-2 pr-6">{ct.name}</div>
-                    <div className={`text-xs mt-1 ${ct.id === selectedId ? 'text-blue-100' : 'text-gray-500'}`}>
+                    <div className={`font-medium text-sm line-clamp-2 pr-6 ${
+                      isSelected ? 'text-white' : 'text-slate-700 dark:text-slate-200'
+                    }`}>
+                      {ct.name}
+                    </div>
+                    <div className={`text-xs mt-1.5 flex items-center gap-1.5 ${
+                      isSelected ? 'text-primary-100' : 'text-slate-400 dark:text-slate-500'
+                    }`}>
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
                       {new Date(ct.created_at).toLocaleDateString()}
-                      {isManual && ' • Added manually'}
+                      {isManual && (
+                        <span className={`inline-flex items-center gap-0.5 ${
+                          isSelected ? 'text-primary-200' : 'text-slate-400'
+                        }`}>
+                          <span className="text-slate-300 dark:text-slate-600">•</span>
+                          Manual
+                        </span>
+                      )}
                     </div>
                   </button>
 
+                  {/* Remove button for manual crosstabs */}
                   {isManual && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         handleRemoveCrosstab(ct.id);
                       }}
-                      className={`absolute top-2 right-2 p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity ${
-                        ct.id === selectedId ? 'hover:bg-blue-600' : 'hover:bg-gray-200'
+                      className={`absolute top-2 right-2 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all ${
+                        isSelected
+                          ? 'hover:bg-primary-500 text-primary-200 hover:text-white'
+                          : 'hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
                       }`}
                       title="Remove from list"
                     >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                       </svg>
                     </button>
