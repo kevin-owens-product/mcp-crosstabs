@@ -143,7 +143,58 @@ function generateSuggestedActions(
   const hasShopping = /shop|buy|purchase|brand|retail|ecommerce|amazon/i.test(topLabels);
   const hasLifestyle = /travel|fitness|health|food|fashion|beauty|wellness/i.test(topLabels);
 
-  // === PRIMARY ACTIONS (always show if applicable) ===
+  // === CONTENT & CHANNEL SPECIFIC ACTIONS (prioritize these when relevant) ===
+  // These are shown first because they're contextual to the specific data
+
+  // Social media strategy
+  if (hasSocialMedia) {
+    actions.push({
+      id: 'social-strategy',
+      label: 'Social Media Strategy',
+      description: 'Get platform-specific recommendations',
+      prompt: 'Which social media platforms should I prioritize for this audience and what content would resonate?',
+      icon: 'chart',
+      category: 'analysis',
+    });
+  }
+
+  // Content recommendations
+  if (hasMediaContent) {
+    actions.push({
+      id: 'content-strategy',
+      label: 'Content Strategy',
+      description: 'Get content format and theme recommendations',
+      prompt: 'What content formats and themes would work best for this audience?',
+      icon: 'chart',
+      category: 'analysis',
+    });
+  }
+
+  // Shopping/purchase behavior insights
+  if (hasShopping) {
+    actions.push({
+      id: 'purchase-insights',
+      label: 'Purchase Behavior',
+      description: 'Understand shopping habits and preferences',
+      prompt: 'What are the key purchase behaviors and brand preferences for this audience?',
+      icon: 'trend',
+      category: 'drill-down',
+    });
+  }
+
+  // Lifestyle insights
+  if (hasLifestyle) {
+    actions.push({
+      id: 'lifestyle-insights',
+      label: 'Lifestyle Profile',
+      description: 'Explore lifestyle and interests in depth',
+      prompt: 'Give me a detailed lifestyle profile of this audience including their interests and values',
+      icon: 'filter',
+      category: 'drill-down',
+    });
+  }
+
+  // === PRIMARY ACTIONS ===
 
   // Marketing strategy - if there are actionable insights
   if (hasOverIndexed || hasRecommendations) {
@@ -192,56 +243,6 @@ function generateSuggestedActions(
       prompt: 'What are the key differentiators that make this audience unique compared to the general population?',
       icon: 'compare',
       category: 'analysis',
-    });
-  }
-
-  // === CONTENT & CHANNEL SPECIFIC ACTIONS ===
-
-  // Social media strategy
-  if (hasSocialMedia) {
-    actions.push({
-      id: 'social-strategy',
-      label: 'Social Media Strategy',
-      description: 'Get platform-specific recommendations',
-      prompt: 'Which social media platforms should I prioritize for this audience and what content would resonate?',
-      icon: 'chart',
-      category: 'analysis',
-    });
-  }
-
-  // Content recommendations
-  if (hasMediaContent) {
-    actions.push({
-      id: 'content-strategy',
-      label: 'Content Strategy',
-      description: 'Get content format and theme recommendations',
-      prompt: 'What content formats and themes would work best for this audience?',
-      icon: 'chart',
-      category: 'analysis',
-    });
-  }
-
-  // Shopping/purchase behavior insights
-  if (hasShopping) {
-    actions.push({
-      id: 'purchase-insights',
-      label: 'Purchase Behavior',
-      description: 'Understand shopping habits and preferences',
-      prompt: 'What are the key purchase behaviors and brand preferences for this audience?',
-      icon: 'trend',
-      category: 'drill-down',
-    });
-  }
-
-  // Lifestyle insights
-  if (hasLifestyle) {
-    actions.push({
-      id: 'lifestyle-insights',
-      label: 'Lifestyle Profile',
-      description: 'Explore lifestyle and interests in depth',
-      prompt: 'Give me a detailed lifestyle profile of this audience including their interests and values',
-      icon: 'filter',
-      category: 'drill-down',
     });
   }
 
@@ -338,9 +339,10 @@ function generateSuggestedActions(
   }
 
   // Limit to reasonable number of actions (prioritize by category)
-  const maxActions = 6;
+  // Show more actions to expose contextual/content-aware suggestions
+  const maxActions = 8;
   if (actions.length > maxActions) {
-    // Prioritize: keep at least one from each category, then fill with analysis/drill-down
+    // Prioritize: keep more analysis actions to show contextual suggestions
     const byCategory = {
       analysis: actions.filter(a => a.category === 'analysis'),
       'drill-down': actions.filter(a => a.category === 'drill-down'),
@@ -350,10 +352,10 @@ function generateSuggestedActions(
 
     const prioritized: SuggestedAction[] = [];
 
-    // Take top 2 analysis actions
-    prioritized.push(...byCategory.analysis.slice(0, 2));
-    // Take top 2 drill-down actions
-    prioritized.push(...byCategory['drill-down'].slice(0, 2));
+    // Take top 3 analysis actions (to include contextual ones like Social Media Strategy)
+    prioritized.push(...byCategory.analysis.slice(0, 3));
+    // Take top 3 drill-down actions (to include Lifestyle Profile, What to Avoid)
+    prioritized.push(...byCategory['drill-down'].slice(0, 3));
     // Take 1 visualization
     prioritized.push(...byCategory.visualization.slice(0, 1));
     // Take 1 export
