@@ -1274,6 +1274,19 @@ export async function handleChatMessage(req: Request, res: Response) {
           const result = await handleListIntentWithData(intent.searchTerm);
           response = result.response;
           crosstabsList = result.crosstabs;
+          suggestedActions = result.suggestedActions || null;
+          break;
+        }
+
+        case 'show_more_crosstabs': {
+          const offset = intent.offset || 10;
+          // Check if "show all" was requested
+          const showAll = message.toLowerCase().includes('show all');
+          const limit = showAll ? 100 : 10;
+          const result = await handleListIntentWithData(undefined, offset, limit);
+          response = result.response;
+          crosstabsList = result.crosstabs;
+          suggestedActions = result.suggestedActions || null;
           break;
         }
 
@@ -1313,6 +1326,19 @@ export async function handleChatMessage(req: Request, res: Response) {
           const result = await handleListIntentWithData(intent.searchTerm);
           response = result.response;
           crosstabsList = result.crosstabs;
+          suggestedActions = result.suggestedActions || null;
+          break;
+        }
+
+        case 'show_more_crosstabs': {
+          const offset = intent.offset || 10;
+          // Check if "show all" was requested
+          const showAll = message.toLowerCase().includes('show all');
+          const limit = showAll ? 100 : 10;
+          const result = await handleListIntentWithData(undefined, offset, limit);
+          response = result.response;
+          crosstabsList = result.crosstabs;
+          suggestedActions = result.suggestedActions || null;
           break;
         }
 
@@ -1382,10 +1408,11 @@ export async function handleChatMessage(req: Request, res: Response) {
 
 // Intent classification
 interface Intent {
-  type: 'list_crosstabs' | 'analyze_crosstab' | 'search_and_analyze' | 'compare_crosstabs' | 'spark_query' | 'help' | 'unknown' | 'prompt_library';
+  type: 'list_crosstabs' | 'analyze_crosstab' | 'search_and_analyze' | 'compare_crosstabs' | 'spark_query' | 'help' | 'unknown' | 'prompt_library' | 'show_more_crosstabs';
   searchTerm?: string;
   crosstabId?: string;
   promptCategory?: PromptMetadata['promptCategory'];
+  offset?: number;
 }
 
 function classifyIntent(message: string, crosstabId?: string | null, promptMetadata?: PromptMetadata): Intent {
@@ -1399,6 +1426,14 @@ function classifyIntent(message: string, crosstabId?: string | null, promptMetad
       promptCategory: promptMetadata.promptCategory,
       crosstabId: crosstabId || undefined,
     };
+  }
+
+  // Check for "show more" requests
+  if (lower.includes('show more') || lower.includes('more crosstabs') || lower.includes('next 10') || lower.includes('show all')) {
+    // Extract offset from message if present (e.g., "show more from 10")
+    const offsetMatch = lower.match(/from (\d+)|offset (\d+)/);
+    const offset = offsetMatch ? parseInt(offsetMatch[1] || offsetMatch[2]) : 10;
+    return { type: 'show_more_crosstabs', offset };
   }
 
   // Check for UUID pattern (crosstab ID) in the message
@@ -1633,9 +1668,12 @@ async function handleCrosstabAwareSparkQuery(message: string, crosstabId: string
 // Intent handlers
 
 // Returns both response text and crosstabs data for UI rendering
-async function handleListIntentWithData(searchTerm?: string): Promise<{
+async function handleListIntentWithData(searchTerm?: string, offset: number = 0, limit: number = 10): Promise<{
   response: string;
   crosstabs: Array<{ id: string; name: string }> | null;
+  suggestedActions?: SuggestedAction[];
+  totalCount?: number;
+  hasMore?: boolean;
 }> {
   if (!orchestrator) {
     return {
@@ -1659,28 +1697,64 @@ async function handleListIntentWithData(searchTerm?: string): Promise<{
     };
   }
 
-  let response = searchTerm
-    ? `Found ${crosstabs.length} crosstab${crosstabs.length > 1 ? 's' : ''} matching "${searchTerm}":\n\n`
-    : `You have ${crosstabs.length} crosstab${crosstabs.length > 1 ? 's' : ''}. Click one below to select it for analysis:\n\n`;
+  const totalCount = crosstabs.length;
+  const endIndex = Math.min(offset + limit, totalCount);
+  const hasMore = endIndex < totalCount;
 
-  // Return crosstabs data for UI to render as buttons
-  const crosstabsData = crosstabs.slice(0, 10).map(ct => ({
+  // Return crosstabs data for UI to render as buttons (with pagination)
+  const crosstabsData = crosstabs.slice(offset, endIndex).map(ct => ({
     id: ct.id,
     name: ct.name
   }));
 
+  let response = '';
+  if (offset === 0) {
+    response = searchTerm
+      ? `Found ${totalCount} crosstab${totalCount > 1 ? 's' : ''} matching "${searchTerm}":\n\n`
+      : `You have ${totalCount} crosstab${totalCount > 1 ? 's' : ''}. Click one below to select it for analysis:\n\n`;
+  } else {
+    response = `Showing crosstabs ${offset + 1}-${endIndex} of ${totalCount}:\n\n`;
+  }
+
   // Debug: Log the crosstabs data being returned
   console.log('handleListIntentWithData - crosstabs fetched:', crosstabs.length);
-  console.log('handleListIntentWithData - crosstabsData:', JSON.stringify(crosstabsData, null, 2));
-  console.log('handleListIntentWithData - first crosstab:', crosstabs[0] ? JSON.stringify(crosstabs[0], null, 2) : 'none');
+  console.log('handleListIntentWithData - offset:', offset, 'limit:', limit, 'hasMore:', hasMore);
 
-  if (crosstabs.length > 10) {
-    response += `\n*Showing first 10 of ${crosstabs.length} crosstabs*\n`;
+  if (hasMore) {
+    response += `\n*Showing ${offset + 1}-${endIndex} of ${totalCount} crosstabs*\n`;
+  }
+
+  // Add suggested action to show more if there are more crosstabs
+  const suggestedActions: SuggestedAction[] = [];
+  if (hasMore) {
+    suggestedActions.push({
+      id: 'show-more-crosstabs',
+      label: `Show More (${endIndex + 1}-${Math.min(endIndex + limit, totalCount)})`,
+      description: `View the next ${Math.min(limit, totalCount - endIndex)} crosstabs`,
+      prompt: `Show more crosstabs from ${endIndex}`,
+      icon: 'chart',
+      category: 'drill-down',
+    });
+  }
+
+  // Add "Show all" option if there are many crosstabs
+  if (totalCount > 20 && offset === 0) {
+    suggestedActions.push({
+      id: 'show-all-crosstabs',
+      label: `Show All ${totalCount} Crosstabs`,
+      description: 'View the complete list',
+      prompt: 'Show all crosstabs',
+      icon: 'export',
+      category: 'export',
+    });
   }
 
   return {
     response,
-    crosstabs: crosstabsData
+    crosstabs: crosstabsData,
+    suggestedActions: suggestedActions.length > 0 ? suggestedActions : undefined,
+    totalCount,
+    hasMore,
   };
 }
 
