@@ -392,6 +392,14 @@ export async function handleChatMessage(req: Request, res: Response) {
           break;
         }
 
+        case 'compare_crosstabs': {
+          const result = await handleCompareIntent(crosstabId);
+          response = result.response;
+          visualizations = result.visualizations || null;
+          suggestedActions = result.suggestedActions || null;
+          break;
+        }
+
         case 'help':
           response = getHelpResponse();
           break;
@@ -427,9 +435,15 @@ export async function handleChatMessage(req: Request, res: Response) {
           response = await handleSearchAndAnalyzeIntent(intent.searchTerm!);
           break;
 
-        case 'compare_crosstabs':
-          response = await handleCompareIntent();
+        case 'compare_crosstabs': {
+          const result = await handleCompareIntent(null);
+          response = result.response;
+          // Extract crosstabs list if included in the result
+          if ('crosstabs' in result) {
+            crosstabsList = (result as any).crosstabs;
+          }
           break;
+        }
 
         case 'help':
           response = getHelpResponse();
@@ -506,7 +520,7 @@ function classifyIntent(message: string, crosstabId?: string | null): Intent {
     return { type: 'list_crosstabs' };
   }
 
-  // Compare
+  // Compare - requires crosstab context
   if (lower.includes('compare') || lower.includes('vs') || lower.includes('versus')) {
     return { type: 'compare_crosstabs' };
   }
@@ -516,12 +530,36 @@ function classifyIntent(message: string, crosstabId?: string | null): Intent {
     return { type: 'analyze_crosstab', crosstabId };
   }
 
+  // Generic analyze request without crosstab - prompt to list crosstabs
+  // Detect phrases like "analyze this crosstab", "analyze data", etc.
+  if (!crosstabId && (lower.includes('analyze') || lower.includes('insights'))) {
+    const searchTerm = message.replace(/analyze|look at|the|my|this|crosstab|and|give|me|all|insights|data/gi, '').trim();
+    // If after removing common words the search term is empty or very short, it's a generic analyze request
+    if (searchTerm.length <= 3) {
+      return { type: 'list_crosstabs' };  // Redirect to list crosstabs
+    }
+    // Otherwise try to search for the specific term
+    return { type: 'search_and_analyze', searchTerm };
+  }
+
   // Search and analyze
-  if (lower.includes('analyze') || lower.includes('look at')) {
-    const searchTerm = message.replace(/analyze|look at|the|my/gi, '').trim();
+  if (lower.includes('look at')) {
+    const searchTerm = message.replace(/look at|the|my/gi, '').trim();
     if (searchTerm.length > 2) {
       return { type: 'search_and_analyze', searchTerm };
     }
+  }
+
+  // Trends query - route to Spark or prompt for crosstab
+  if (lower.includes('trend') || lower.includes('over time') || lower.includes('changes')) {
+    if (crosstabId) {
+      return { type: 'analyze_crosstab', crosstabId };  // Analyze with trend focus
+    }
+    // Without crosstab, this becomes a spark query or list crosstabs prompt
+    if (shouldUseSparkAPI(message)) {
+      return { type: 'spark_query' };
+    }
+    return { type: 'list_crosstabs' };  // Prompt to select a crosstab
   }
 
   // Help
@@ -926,8 +964,76 @@ async function handleSearchAndAnalyzeIntent(searchTerm: string): Promise<string>
   return result.response;
 }
 
-async function handleCompareIntent(): Promise<string> {
-  return 'Comparison feature coming soon! For now, you can analyze each crosstab separately.';
+async function handleCompareIntent(crosstabId?: string | null): Promise<AnalysisResult> {
+  if (!orchestrator) {
+    return { response: 'The crosstab feature is not configured. Please add the GWI_API_KEY environment variable.' };
+  }
+
+  // If a crosstab is selected and it has multiple markets, we can do a market comparison
+  if (crosstabId) {
+    try {
+      const crosstab = await orchestrator.client.getCrosstab(crosstabId, true);
+
+      if (crosstab.country_codes && crosstab.country_codes.length > 1) {
+        // Has multiple markets - provide market comparison analysis
+        const analysis = analyzer.analyze(crosstab);
+
+        let response = `## Market Comparison: ${crosstab.name}\n\n`;
+        response += `This crosstab includes data from **${crosstab.country_codes.length} markets**: ${crosstab.country_codes.join(', ')}\n\n`;
+
+        response += `### Key Behaviors Across Markets\n\n`;
+        response += `Here are the top behaviors by index that you can compare across markets:\n\n`;
+
+        if (analysis.statistics.topIndexes.length > 0) {
+          analysis.statistics.topIndexes.slice(0, 10).forEach((item, i) => {
+            response += `${i + 1}. **${item.label}** - Index: ${item.index}, Reach: ${item.percentage}%\n`;
+          });
+        }
+
+        response += `\n### Next Steps\n`;
+        response += `To see detailed market-by-market breakdowns, you would need to:\n`;
+        response += `1. Create separate crosstabs for each market, or\n`;
+        response += `2. Use GWI platform filters to segment by country\n`;
+
+        const visualizations = generateVisualizations(analysis, crosstab.name);
+        const suggestedActions: SuggestedAction[] = [
+          {
+            id: 'marketing-strategy',
+            label: 'Marketing Strategy',
+            description: 'Get recommendations for targeting across markets',
+            prompt: 'What marketing strategy would you recommend based on this market comparison?',
+            icon: 'target',
+            category: 'analysis',
+          },
+          {
+            id: 'targeting-opportunities',
+            label: 'Targeting Opportunities',
+            description: 'Find the best segments to target',
+            prompt: 'What are the best targeting opportunities based on this data?',
+            icon: 'target',
+            category: 'drill-down',
+          }
+        ];
+
+        return { response, visualizations, suggestedActions };
+      } else {
+        // Single market crosstab
+        return {
+          response: `## Market Comparison\n\nThe selected crosstab **${crosstab.name}** only contains data for ${crosstab.country_codes?.[0] || 'one market'}.\n\nTo compare markets, you need a crosstab that includes multiple countries. You can:\n\n1. **Create a new crosstab** in the GWI platform with multiple markets selected\n2. **Select a different crosstab** that includes multiple countries\n3. **Ask a general question** like "How do millennials in the UK differ from Germany?" to query GWI data directly`
+        };
+      }
+    } catch (error) {
+      console.error('Compare intent error:', error);
+      return { response: `Failed to load crosstab for comparison: ${error instanceof Error ? error.message : 'Unknown error'}` };
+    }
+  }
+
+  // No crosstab selected - list available crosstabs
+  const result = await handleListIntentWithData();
+  return {
+    response: `## Market Comparison\n\nTo compare markets, first select a crosstab that contains multiple countries.\n\n${result.response}`,
+    ...({ crosstabs: result.crosstabs } as any)
+  };
 }
 
 function getHelpResponse(): string {
